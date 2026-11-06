@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace Modules\ModuleCallFeedback\Lib;
 
+use MikoPBX\Core\Workers\Cron\WorkerSafeScriptsCore;
 use MikoPBX\Core\Workers\Libs\WorkerModelsEvents\Actions\ReloadDialplanAction;
 use MikoPBX\Core\Workers\WorkerModelsEvents;
 use MikoPBX\Modules\Config\ConfigClass;
@@ -18,11 +19,6 @@ class CallFeedbackConf extends ConfigClass
     public function extensionGenContexts(): string
     {
         return DialplanBuilder::contexts();
-    }
-
-    public function generateIncomingRoutBeforeDial(string $rout_number): string
-    {
-        return DialplanBuilder::incomingBeforeDial($rout_number);
     }
 
     public function generateIncomingRoutAfterDialContext(string $uniqId): string
@@ -38,6 +34,17 @@ class CallFeedbackConf extends ConfigClass
     public function generateOutRoutContext(array $rout): string
     {
         return DialplanBuilder::outboundBeforeDial($rout);
+    }
+
+    /** The worker that stores survey results. */
+    public function getModuleWorkers(): array
+    {
+        return [
+            [
+                'type'   => WorkerSafeScriptsCore::CHECK_BY_BEANSTALK,
+                'worker' => WorkerCallFeedback::class,
+            ],
+        ];
     }
 
     /** Enabling a module doesn't reload the dialplan by itself. */

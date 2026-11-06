@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Survey call-path probe: real calls through the test PBX, checked against the module's log.
+"""Survey probe: real calls through the test PBX, checked against the module's log and database.
 
-With the module's call-path probe dialplan installed, every survey decision
-writes a "CFPROBE event=... key=value" line to Asterisk's notice log. Each
-scenario here places a real call with CallSim's phones and carrier, presses
-survey keys from the customer's side after the agent hangs up, then collects
-the CFPROBE lines the call produced and checks them against what the
-scenario expects.
+The module's dialplan writes a "CFPROBE event=... key=value" line to
+Asterisk's notice log at every survey decision. Each scenario here places a
+real call with CallSim's phones and carrier, presses survey keys from the
+customer's side after the agent hangs up, then checks the CFPROBE lines the
+call produced and the rows the module's worker stored for it (session,
+answers, CDR attribution, skip counts).
 
   probe.py list            list the scenarios
   probe.py run [names...]  run all scenarios (or the named ones)
@@ -28,6 +28,8 @@ from callsim import (CALLER, DID_DIRECT, DID_MAIN, IVR, OUTBOUND_NUMBER, PBX_CON
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR = HERE / "probe-results"
 MESSAGES_LOG = "/storage/usbdisk1/mikopbx/log/asterisk/messages"
+MODULE_DB = "/storage/usbdisk1/mikopbx/custom_modules/ModuleCallFeedback/db/module.db"
+ATTRIBUTION_TIMEOUT = 75     # the worker attributes every 30 s, 15 s after a call ends
 LINE_RE = re.compile(r"CFPROBE event=(\S+)(.*)$")
 PAIR_RE = re.compile(r"(\w+)=(\S*)")
 
@@ -66,6 +68,45 @@ def wait_quiet(since_bytes, quiet=4, timeout=40):
             break
         time.sleep(1)
     return probe_events(since_bytes)
+
+
+# --------------------------------------------------------------------------- module database
+
+def db_rows(sql):
+    out = docker("exec", PBX_CONTAINER, "sqlite3", "-json", MODULE_DB, sql, capture=True)
+    return json.loads(out) if out.strip() else []
+
+
+def linkedids(events):
+    return sorted({e["linkedid"] for e in events if e.get("linkedid")})
+
+
+def sessions_of(ids):
+    if not ids:
+        return []
+    marks = ",".join("'" + i.replace("'", "") + "'" for i in ids)
+    rows = db_rows(f"SELECT * FROM m_SurveySessions WHERE linkedid IN ({marks})")
+    for row in rows:
+        row["answers"] = {str(a["position"]): str(a["value"]) for a in db_rows(
+            f"SELECT position, value FROM m_SurveyAnswers WHERE session_id = {int(row['id'])}")}
+    return rows
+
+
+def skip_total(reason):
+    rows = db_rows(f"SELECT COALESCE(SUM(count), 0) AS n FROM m_SkipCounts WHERE reason = '{reason}'")
+    return int(rows[0]["n"]) if rows else 0
+
+
+def wait_for_sessions(ids, attributed, timeout):
+    """The stored sessions of these calls; with `attributed`, waits until the worker has filled in the CDR fields."""
+    deadline = time.time() + timeout
+    rows = sessions_of(ids)
+    while time.time() < deadline:
+        rows = sessions_of(ids)
+        if rows and (not attributed or all(r["attributed_at"] for r in rows)):
+            break
+        time.sleep(3)
+    return rows
 
 
 # --------------------------------------------------------------------------- helpers
@@ -124,46 +165,71 @@ SCENARIOS = []
 
 
 def scenario(description, expect):
-    """`expect(events)` returns a list of failed checks (empty when the call behaved)."""
+    """`expect(result)` returns a list of failed checks (empty when the call behaved).
+
+    `result` has the call's CFPROBE "events", its stored "sessions" and the
+    change in "skips" (too-short count) during the scenario.
+    """
     def wrap(fn):
         SCENARIOS.append({"name": fn.__name__, "description": description, "run": fn, "expect": expect})
         return fn
     return wrap
 
 
-def surveyed(direction, q1, q2, talk):
-    """Expectation: survey offered in `direction`, answers recorded, talk time about `talk` s."""
-    def check(events):
-        problems = []
+def surveyed(direction, answers, talk, agent, status="completed", queue=None):
+    """Expectation: survey offered in `direction`, `answers` ({"1": "4", ...}) stored with
+    `status`, dialplan talk time about `talk` s, and the CDR attributing it to `agent`."""
+    def check(result):
+        events, problems = result["events"], []
         offered = first(events, "offered")
-        hangup = first(events, "hangup")
         if not offered or offered.get("dir") != direction:
             problems.append(f"survey not offered ({direction})")
-        if not hangup:
-            problems.append("hangup handler did not run")
-        else:
-            if hangup.get("q1") != q1:
-                problems.append(f"q1={hangup.get('q1')!r}, expected {q1!r}")
-            if hangup.get("q2") != q2:
-                problems.append(f"q2={hangup.get('q2')!r}, expected {q2!r}")
-        if len([e for e in events if e["event"] == "hangup"]) > 1:
-            problems.append("hangup handler ran more than once")
+        hangups = [e for e in events if e["event"] == "hangup"]
+        if len(hangups) != 1:
+            problems.append(f"survey hangup handler ran {len(hangups)} times")
         talk_event = first(events, "in_talk" if direction == "in" else "out_talk")
         measured = num(talk_event.get("cf_talk")) if talk_event else None
         if measured is None:
             problems.append("no agent talk time on the customer's channel")
         elif abs(measured - talk) > 2:
             problems.append(f"agent talk time {measured}, expected about {talk}")
+
+        sessions = result["sessions"]
+        if len(sessions) != 1:
+            return problems + [f"{len(sessions)} stored sessions, expected 1"]
+        row = sessions[0]
+        for field, expected in (("direction", direction), ("status", status), ("agent", agent),
+                                ("queue", queue), ("excluded", 0)):
+            if row.get(field) != expected:
+                problems.append(f"stored {field}={row.get(field)!r}, expected {expected!r}")
+        if row["answers"] != answers:
+            problems.append(f"stored answers {row['answers']}, expected {answers}")
+        if not row.get("attributed_at"):
+            problems.append("session not attributed from the CDR")
+        elif row.get("cdr_talk_seconds") is None or abs(row["cdr_talk_seconds"] - talk) > 2:
+            problems.append(f"CDR talk {row.get('cdr_talk_seconds')}, expected about {talk}")
         return problems
     return check
 
 
-def not_surveyed(events):
-    return ["survey was offered"] if first(events, "offered") else []
+def not_surveyed(result):
+    problems = ["survey was offered"] if first(result["events"], "offered") else []
+    if result["sessions"]:
+        problems.append(f"{len(result['sessions'])} session(s) stored")
+    return problems
+
+
+def skipped_too_short(result):
+    problems = ["survey was offered"] if first(result["events"], "offered") else []
+    if result["sessions"]:
+        problems.append("a session was stored")
+    if result["skips"] != 1:
+        problems.append(f"too-short count went up by {result['skips']}, expected 1")
+    return problems
 
 
 @scenario("Inbound to the direct DID, 301 answers after 2 s, talks 6 s and hangs up; the caller "
-          "presses 4, then 1 and 0 (NPS 10).", surveyed("in", "4", "10", 6))
+          "presses 4, then 1 and 0 (NPS 10).", surveyed("in", {"1": "4", "2": "10"}, 6, "301"))
 def in_direct(lines):
     c, a = lines["carrier"], lines["301"]
     c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
@@ -172,7 +238,7 @@ def in_direct(lines):
 
 @scenario("Inbound to the IVR, caller presses 1 for the queue, 302 answers after 3 s, talks 6 s and "
           "hangs up; the caller presses 5, then a lone 1 (NPS 1, after the digit timeout).",
-          surveyed("in", "5", "1", 6))
+          surveyed("in", {"1": "5", "2": "1"}, 6, "302", queue="3100"))
 def in_queue(lines):
     c, q1 = lines["carrier"], lines["302"]
     c.dial(DID_MAIN); c.established(); pause(2); c.keys("1"); q1.ringing(); pause(3); q1.answer()
@@ -181,11 +247,28 @@ def in_queue(lines):
 
 @scenario("Inbound to the IVR, no key: the IVR times out to the queue, 303 answers, talks 6 s and "
           "hangs up; the caller presses 3 and then nothing (NPS timeout).",
-          surveyed("in", "3", "timeout", 6))
+          surveyed("in", {"1": "3"}, 6, "303", status="started", queue="3100"))
 def in_ivr_timeout_queue(lines):
     c, q2 = lines["carrier"], lines["303"]
     c.dial(DID_MAIN); c.established(); q2.ringing(30); pause(2); q2.answer(); pause(6); q2.hangup()
     pause(1.5); c.keys("3"); pause(10); safe_hangup(c)
+
+
+@scenario("Inbound to 301, answered; 301 hangs up after 1 s of talk, under the 4 s minimum. Not "
+          "surveyed; counted as too short.", skipped_too_short)
+def in_too_short(lines):
+    c, a = lines["carrier"], lines["301"]
+    c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(1); a.hangup()
+    pause(4); safe_hangup(c)
+
+
+@scenario("Inbound to 301, answered, 6 s talk; after 301 hangs up the caller presses 2 for the first "
+          "question and hangs up during the second. The first answer is kept.",
+          surveyed("in", {"1": "2"}, 6, "301", status="started"))
+def in_partial(lines):
+    c, a = lines["carrier"], lines["301"]
+    c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
+    pause(1.5); c.keys("2"); pause(1.5); safe_hangup(c)
 
 
 @scenario("Inbound to 301, answered; the caller hangs up first. Nothing can be surveyed.",
@@ -228,7 +311,7 @@ def in_blind_transfer(lines):
 @scenario("Inbound to 301, answered; 301 attended-transfers (##) to 302, then hangs up to complete "
           "it; 302 talks 5 s and hangs up; the caller presses 2 and 7. Talk time counts from the "
           "first answer (301), about 15 s.",
-          surveyed("in", "2", "7", 15))
+          surveyed("in", {"1": "2", "2": "7"}, 15, "301"))
 def in_attended_transfer(lines):
     c, a, b = lines["carrier"], lines["301"], lines["302"]
     c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(3)
@@ -237,7 +320,7 @@ def in_attended_transfer(lines):
 
 
 @scenario("Outbound 301 -> carrier, answered after 2 s, 6 s talk, 301 hangs up; the customer "
-          "presses 3, then 0 (NPS 0).", surveyed("out", "3", "0", 6))
+          "presses 3, then 0 (NPS 0).", surveyed("out", {"1": "3", "2": "0"}, 6, "301"))
 def out_answered(lines):
     a, c = lines["301"], lines["carrier"]
     a.dial(OUTBOUND_NUMBER); c.ringing(); pause(2); c.answer(); a.established(); pause(6); a.hangup()
@@ -272,6 +355,7 @@ def run(names):
             print(f"{s['name']}: {s['description']}")
             lines = {n: Line(n) for n in [*callsim.PHONES, "carrier"]}
             since = log_size()
+            skips_before = skip_total("too_short")
             error = None
             try:
                 s["run"](lines)
@@ -279,13 +363,23 @@ def run(names):
                 error = str(e)
                 safe_hangup(*lines.values())
             events = wait_quiet(since)
-            problems = ([f"scenario error: {error}"] if error else []) + s["expect"](events)
+            ids = linkedids(events)
+            expects_session = first(events, "offered") is not None
+            result = {
+                "events": events,
+                "sessions": wait_for_sessions(ids, expects_session, ATTRIBUTION_TIMEOUT if expects_session else 5),
+                "skips": skip_total("too_short") - skips_before,
+            }
+            problems = ([f"scenario error: {error}"] if error else []) + s["expect"](result)
             for e in events:
                 print("   ", e["event"], {k: v for k, v in e.items() if k not in ("event", "time")})
+            for row in result["sessions"]:
+                print("    stored", {k: row[k] for k in ("status", "answers", "agent", "queue", "talk_seconds",
+                                                       "cdr_talk_seconds", "excluded")})
             print("  PASS" if not problems else "  FAIL: " + "; ".join(problems))
             (RESULTS_DIR / f"{s['name']}.json").write_text(json.dumps(
                 {"scenario": s["name"], "description": s["description"], "problems": problems,
-                 "events": events}, indent=2) + "\n")
+                 **result}, indent=2) + "\n")
             summary.append((s["name"], problems))
             time.sleep(3)
     print("\nSummary:")

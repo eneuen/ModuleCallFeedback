@@ -53,21 +53,21 @@ Fixtures are written to `tests/fixtures/cdr/<scenario>.json`. Each one holds the
 
 ## Survey call-path probe
 
-`probe.py` checks the module's survey dialplan with real calls. It needs the module's probe build installed (it writes `CFPROBE` lines to Asterisk's notice log at every survey decision) and `callsim.py setup` done first, with the same environment variables.
+`probe.py` checks the module's survey with real calls. It needs the module installed (its dialplan writes `CFPROBE` lines to Asterisk's notice log at every survey decision) and `callsim.py setup` done first, with the same environment variables.
 
 ```bash
 python3 tools/callsim/probe.py list         # scenarios
 python3 tools/callsim/probe.py run          # all scenarios, or name some
 ```
 
-Each scenario places a call, presses survey keys from the customer's side once the agent hangs up, collects the `CFPROBE` lines the call produced, and checks them: whether the survey was offered, the recorded answers, the agent's talk time, and that the survey's hangup handler ran once. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed). One scenario adds an IVR action (4 → hangup) for its own duration and removes it afterwards.
+Each scenario places a call, presses survey keys from the customer's side once the agent hangs up, collects the `CFPROBE` lines the call produced, and checks them: whether the survey was offered, the agent's talk time, and that the survey's hangup handler ran once. It then reads the module's database inside the PBX container and checks what the worker stored: the session's status and answers, its attribution from the CDR (agent, queue, talk time; this waits up to about a minute for the worker), and the too-short skip count. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed). One scenario adds an IVR action (4 → hangup) for its own duration and removes it afterwards.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `callsim.py` | Driver: setup, scenarios, fixture capture, teardown |
-| `probe.py` | Survey call-path scenarios, checked against the module's probe log |
+| `probe.py` | Survey scenarios, checked against the module's log and database |
 | `ctl.py` | Small client for baresip's netstring/JSON control protocol |
 | `phone.py` | Container entry point: starts one baresip per account |
 | `Dockerfile` | Debian image with baresip and Python |

@@ -1,0 +1,32 @@
+{
+  "name": "eneuen/module-call-feedback",
+  "description": "Post-call keypad feedback survey (CSAT/NPS) module for MikoPBX",
+  "type": "library",
+  "license": "GPL-3.0-or-later",
+  "require": {
+    "php": ">=8.4"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "Modules\\ModuleCallFeedback\\Lib\\": "Lib/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Modules\\ModuleCallFeedback\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit",
+    "lint": "find Lib Models Setup Messages agi-bin tests -name '*.php' -print0 | xargs -0 -n1 php -l"
+  },
+  "config": {
+    "sort-packages": true,
+    "platform": {
+      "php": "8.4.0"
+    }
+  }
+}
