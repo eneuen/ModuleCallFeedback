@@ -10,7 +10,9 @@ use Modules\ModuleCallFeedback\Lib\Attribution;
 use Modules\ModuleCallFeedback\Lib\CallIndexer;
 use Modules\ModuleCallFeedback\Lib\CdrReader;
 use Modules\ModuleCallFeedback\Lib\FeedbackStore;
-use Modules\ModuleCallFeedback\Lib\SurveyCatalog;
+use Modules\ModuleCallFeedback\Lib\SurveyEditor;
+use Modules\ModuleCallFeedback\Lib\SurveyRepository;
+use Modules\ModuleCallFeedback\Tests\Unit\Support\Surveys;
 use Modules\ModuleCallFeedback\Tests\Unit\Support\TestDatabases;
 use PHPUnit\Framework\TestCase;
 
@@ -21,11 +23,19 @@ final class AttributionTest extends TestCase
 {
     private TestDatabases $databases;
     private FeedbackStore $store;
+    private SurveyRepository $surveys;
+    private int $surveyId;
 
     protected function setUp(): void
     {
         $this->databases = new TestDatabases();
-        $this->store = new FeedbackStore($this->databases->moduleDatabase(), false);
+        $moduleFile = $this->databases->moduleDatabase();
+        $this->store = new FeedbackStore($moduleFile, false);
+        $module = TestDatabases::writable($moduleFile);
+        $editor = new SurveyEditor($module, TestDatabases::writable($this->databases->configDatabase()));
+        $this->surveyId = Surveys::complete($editor, $module, []);
+        $editor->update($this->surveyId, ['min_talk_seconds' => '4']);
+        $this->surveys = new SurveyRepository($module);
     }
 
     /** Stores a survey session for the call in a fixture, ending at $endedAt. */
@@ -33,8 +43,8 @@ final class AttributionTest extends TestCase
     {
         $linkedId = (string)TestDatabases::legsOf($scenario)[0]['linkedid'];
         $this->store->record(FeedbackStoreTest::record([
-            'linkedid' => $linkedId, 'direction' => $direction, 'ended_at' => $endedAt,
-        ]), SurveyCatalog::builtIn());
+            'linkedid' => $linkedId, 'survey' => $this->surveyId, 'direction' => $direction, 'ended_at' => $endedAt,
+        ]), $this->surveys->find($this->surveyId));
 
         return $linkedId;
     }
@@ -43,7 +53,7 @@ final class AttributionTest extends TestCase
     {
         $cdr = new CdrReader($this->databases->cdrDatabase(TestDatabases::legsOf(...$scenarios)));
 
-        return new Attribution($this->store, $cdr, new CallIndexer([TestDatabases::fixtureProviderId()]));
+        return new Attribution($this->store, $cdr, new CallIndexer([TestDatabases::fixtureProviderId()]), $this->surveys);
     }
 
     public function testFillsInTheAgentQueueAndTalkTime(): void
@@ -55,12 +65,13 @@ final class AttributionTest extends TestCase
         $result = $this->attribution('inbound_direct_answered', 'inbound_ivr_key1_queue_answered', 'outbound_answered')
             ->run(1100);
 
-        self::assertSame(['attributed' => 3, 'discarded' => 0, 'waiting' => 0], $result);
-        $row = $this->store->session($direct, 0);
+        self::assertSame([3, 0, 0], [$result['attributed'], $result['discarded'], $result['waiting']]);
+        self::assertSame(['301', '302', '301'], array_column($result['counted'], 'agent'), 'Each one counts: none is excluded.');
+        $row = $this->store->session($direct, $this->surveyId);
         self::assertSame(['301', null, 5, 0], [$row['agent'], $row['queue'], $row['cdr_talk_seconds'], $row['excluded']]);
-        $row = $this->store->session($queue, 0);
+        $row = $this->store->session($queue, $this->surveyId);
         self::assertSame(['302', '3100', 5], [$row['agent'], $row['queue'], $row['cdr_talk_seconds']]);
-        $row = $this->store->session($out, 0);
+        $row = $this->store->session($out, $this->surveyId);
         self::assertSame('301', $row['agent'], 'Outbound: the extension that called.');
         self::assertSame(1100, $row['attributed_at']);
     }
@@ -76,27 +87,31 @@ final class AttributionTest extends TestCase
 
     public function testMarksCallsUnderTheMinimumTalkTimeExcluded(): void
     {
-        // The built-in survey's minimum is 4 s. The direct call talked 5 s; the
+        // The survey's minimum is 4 s. The direct call talked 5 s; the
         // voicemail call, had it been surveyed, talked to nobody.
         $talked = $this->surveyed('inbound_direct_answered', 'in', 1000);
         $nobody = $this->surveyed('inbound_ivr_key3_voicemail', 'in', 1000);
 
-        $this->attribution('inbound_direct_answered', 'inbound_ivr_key3_voicemail')->run(1100);
+        $result = $this->attribution('inbound_direct_answered', 'inbound_ivr_key3_voicemail')->run(1100);
 
-        self::assertSame(0, $this->store->session($talked, 0)['excluded']);
-        $row = $this->store->session($nobody, 0);
+        self::assertSame(0, $this->store->session($talked, $this->surveyId)['excluded']);
+        self::assertSame([(int)$this->store->session($talked, $this->surveyId)['id']], array_column($result['counted'], 'id'),
+            'An excluded session opens no follow-up.');
+        $row = $this->store->session($nobody, $this->surveyId);
         self::assertSame([1, 0, null], [$row['excluded'], $row['cdr_talk_seconds'], $row['agent']]);
     }
 
     public function testDiscardsSessionsWhoseCallNeverReachesTheCdr(): void
     {
-        $this->store->record(FeedbackStoreTest::record(['linkedid' => 'forged-1', 'ended_at' => 1000]), SurveyCatalog::builtIn());
+        $this->store->record(FeedbackStoreTest::record(['linkedid' => 'forged-1', 'survey' => $this->surveyId, 'ended_at' => 1000]),
+            $this->surveys->find($this->surveyId));
         $attribution = $this->attribution('inbound_direct_answered');
 
-        self::assertSame(['attributed' => 0, 'discarded' => 0, 'waiting' => 1], $attribution->run(1100));
-        self::assertNotNull($this->store->session('forged-1', 0), 'Kept while the CDR may still be catching up.');
+        $result = $attribution->run(1100);
+        self::assertSame([0, 0, 1, []], [$result['attributed'], $result['discarded'], $result['waiting'], $result['counted']]);
+        self::assertNotNull($this->store->session('forged-1', $this->surveyId), 'Kept while the CDR may still be catching up.');
 
         self::assertSame(1, $attribution->run(1000 + Attribution::GIVE_UP_SECONDS)['discarded']);
-        self::assertNull($this->store->session('forged-1', 0));
+        self::assertNull($this->store->session('forged-1', $this->surveyId));
     }
 }

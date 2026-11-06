@@ -27,7 +27,7 @@ final class HandoffTest extends TestCase
             'CF_CTX' => 'SIP-TRUNK-2EC28F63', 'CF_ROUTE' => '', 'CF_DID' => '5551001', 'CF_CALLER' => '5550000100',
             'CF_ANSWER_AT' => '1793993857', 'CF_TALK' => '6', 'CF_OFFERED' => '1793993863',
             'CF_A1' => '4', 'CF_A1_AT' => '1793993865', 'CF_A2' => '10', 'CF_A2_AT' => '1793993867',
-            'CF_A3' => '', 'CF_A3_AT' => '',
+            'CF_A3' => '', 'CF_A3_AT' => '', 'CF_TEST' => '',
         ];
     }
 
@@ -49,6 +49,7 @@ final class HandoffTest extends TestCase
             'talk'       => 6,
             'offered_at' => 1793993863,
             'ended_at'   => 1793993868,
+            'is_test'    => false,
             'answers'    => [1 => ['value' => 4, 'at' => 1793993865], 2 => ['value' => 10, 'at' => 1793993867]],
         ], $record);
     }
@@ -68,6 +69,27 @@ final class HandoffTest extends TestCase
 
         self::assertSame('too_short', $record['reason']);
         self::assertSame([], $record['answers']);
+    }
+
+    public function testATestCallIsFlagged(): void
+    {
+        self::assertTrue(Handoff::fromChannel(self::LINKEDID, ['CF_TEST' => '1'] + self::inboundVars(), 1793993868)['is_test']);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function skipReasons(): iterable
+    {
+        foreach (Handoff::SKIP_REASONS as $reason) {
+            yield $reason => [$reason];
+        }
+    }
+
+    #[DataProvider('skipReasons')]
+    public function testEveryRuleSkipIsAccepted(string $reason): void
+    {
+        $vars = ['CF_STATUS' => 'skipped', 'CF_REASON' => $reason, 'CF_A1' => '', 'CF_A2' => ''] + self::inboundVars();
+
+        self::assertSame($reason, Handoff::fromChannel(self::LINKEDID, $vars, 1793993868)['reason']);
     }
 
     public function testTheChannelVariableListCoversEveryQuestion(): void
@@ -93,6 +115,8 @@ final class HandoffTest extends TestCase
         yield 'three-digit answer' => [['CF_A2' => '100']];
         yield 'other record version' => [['CF_V' => '2']];
         yield 'missing version' => [['CF_V' => '']];
+        yield 'test flag other than 1' => [['CF_TEST' => 'yes']];
+        yield 'skipped test call' => [['CF_TEST' => '1', 'CF_STATUS' => 'skipped', 'CF_REASON' => 'too_short', 'CF_A1' => '', 'CF_A2' => '']];
     }
 
     /** @param array<string, string> $override */

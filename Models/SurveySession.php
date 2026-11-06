@@ -36,7 +36,7 @@ class SurveySession extends ModulesModelsBase
     public $linkedid;
 
     /**
-     * Survey version; 0 is the built-in test survey.
+     * Survey version (m_Surveys.id).
      *
      * @Column(type="integer", nullable=false, default="0")
      */
@@ -135,6 +135,13 @@ class SurveySession extends ModulesModelsBase
      * @Column(type="integer", nullable=false, default="0")
      */
     public $excluded;
+
+    /**
+     * 1 for a test call placed from the survey editor: kept apart from results.
+     *
+     * @Column(type="integer", nullable=false, default="0")
+     */
+    public $is_test;
 
     /**
      * When the CDR fields were filled in; empty while the call is pending.

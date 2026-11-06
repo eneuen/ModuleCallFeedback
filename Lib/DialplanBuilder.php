@@ -6,29 +6,33 @@ declare(strict_types=1);
 
 namespace Modules\ModuleCallFeedback\Lib;
 
+use PDO;
+
 /**
- * Builds the module's dialplan.
+ * Builds the module's dialplan from the stored surveys.
  *
- * Until surveys can be configured, every answered inbound and outbound call
- * gets the built-in test survey (SurveyCatalog::builtIn(), beep prompts):
- * Q1 is one key (CSAT 1-5), Q2 is 0-10 (NPS, "1 then 0" for 10). Every
- * decision point also writes a "CFPROBE" line to the Asterisk notice log for
- * the CallSim probe scenarios.
+ * - Active surveys run on their targeted routes only. Draft versions get
+ *   their survey context too, but nothing routes to them except a test call.
+ * - Nothing is generated for a direction no active survey targets, so with no
+ *   active survey the module adds no dialplan to any call.
+ * - During a survey everything lives in CF_* channel variables. When the
+ *   customer's channel ends, the survey's hangup handler runs the module's
+ *   AGI script once, which validates them and hands them to the worker.
+ * - Every decision point writes a "CFPROBE" line to Asterisk's verbose log,
+ *   for the CallSim probe scenarios and for troubleshooting.
  *
- * During the survey everything lives in CF_* channel variables. When the
- * customer's channel ends, the survey's hangup handler runs the module's AGI
- * script once, which validates the variables and hands them to the worker.
- *
- * Only fixed text, integers and validated IDs are ever written into the
- * dialplan; nothing typed by an admin or sent by a caller is.
+ * Only fixed text, integers, enum values, digit strings and sound-file paths
+ * resolved by the core are written into the dialplan, each checked against a
+ * pattern here. Survey names and anything a caller sends never are.
  */
 final class DialplanBuilder
 {
     public const CTX_IN_ENTRY      = 'call-feedback-in';
+    public const CTX_IN_MATCH      = 'call-feedback-in-match';
     public const CTX_OUT_ENTRY     = 'call-feedback-out';
-    public const CTX_SURVEY        = 'call-feedback-survey';
+    public const CTX_TEST          = 'call-feedback-test';
     public const CTX_ANSWER        = 'call-feedback-answer';
-    public const CTX_NPS           = 'call-feedback-nps';
+    public const CTX_EXCLUDED      = 'call-feedback-excluded';
     public const CTX_HANGUP        = 'call-feedback-hangup';
     public const CTX_AGENT_IN_END  = 'call-feedback-agent-in-end';
     public const CTX_AGENT_OUT_END = 'call-feedback-agent-out-end';
@@ -36,20 +40,126 @@ final class DialplanBuilder
     /** astdb family for the outbound talk-time hand-over (see outboundBeforeDial). */
     public const DB_TALK = 'call-feedback-talk';
 
+    /** astdb family for the frequency cap: digits of the number => time last offered. */
+    public const DB_CAP = 'call-feedback-cap';
+
+    /** GROUP() category for the concurrent-survey cap. */
+    public const GROUP = 'call-feedback';
+
     /** The AGI script in agi-bin/, linked into Asterisk's AGI folder by the core. */
     public const AGI_SCRIPT = 'call_feedback_end.php';
 
+    public const array LANGUAGES = ['en-en', 'ru-ru'];
+
+    /** Seconds Asterisk waits for a second key when a scale has two-digit answers (NPS "10"). */
+    private const int DIGIT_TIMEOUT = 2;
+
+    private const string PATH_PATTERN = '/^\/[A-Za-z0-9_\/.-]{1,250}$/';
+    private const string PROVIDER_PATTERN = '/^[A-Za-z0-9_-]{1,64}$/';
+    private const string NUMBER_PATTERN = '/^[0-9]{1,32}$/';
+
     /** Values every probe log line carries. */
-    private const COMMON = 'linkedid=${CHANNEL(linkedid)} chan=${CHANNEL}';
+    private const string COMMON = 'linkedid=${CHANNEL(linkedid)} chan=${CHANNEL}';
+
+    /** @var list<array<string, mixed>> */
+    private array $surveys = [];
+
+    /** @var list<array{survey_id: int, provider: string, number: string}> */
+    private array $inboundTargets = [];
+
+    /** @var array<int, int> Outgoing route ID => survey ID. */
+    private array $outboundTargets = [];
+
+    /** @var list<string> */
+    private array $exclusions;
 
     /**
-     * Inbound, after the route's dial (inside [<context>-incoming]).
-     * Gosub, not Goto, so the admin's own after-dial-custom dialplan still runs.
+     * @param list<array<string, mixed>> $surveys Callable survey versions (SurveyRepository::callable()).
+     * @param list<array{survey_id: int, direction: string, route_id: int}> $targets Active targets.
+     * @param array<int, array{provider: string, number: string}> $incomingRoutes Incoming routes by ID.
+     * @param callable(int): ?string $promptPath Sound file ID => path for Playback, without extension.
+     * @param list<string> $exclusions
      */
-    public static function incomingAfterDial(string $contextId): string
+    public function __construct(
+        array $surveys,
+        array $targets,
+        array $incomingRoutes,
+        callable $promptPath,
+        array $exclusions,
+        private readonly int $maxConcurrent,
+    ) {
+        $active = [];
+        foreach ($surveys as $survey) {
+            $survey['paths'] = [];
+            foreach (['intro', 'invalid', 'thanks'] as $prompt) {
+                $survey['paths'][$prompt] = self::path($promptPath, $survey[$prompt . '_prompt_id'] ?? null);
+            }
+            foreach ($survey['questions'] as $position => $question) {
+                $survey['questions'][$position]['path'] = self::path($promptPath, $question['prompt_id']);
+            }
+            if (!in_array($survey['language'], self::LANGUAGES, true)) {
+                $survey['language'] = self::LANGUAGES[0];
+            }
+            $this->surveys[] = $survey;
+            if ($survey['status'] === SurveyRepository::ACTIVE) {
+                $active[(int)$survey['id']] = true;
+            }
+        }
+
+        foreach ($targets as $target) {
+            if (!isset($active[$target['survey_id']])) {
+                continue;
+            }
+            if ($target['direction'] === 'out') {
+                $this->outboundTargets[$target['route_id']] = $target['survey_id'];
+                continue;
+            }
+            $route = $incomingRoutes[$target['route_id']] ?? null;
+            if ($route === null) {
+                continue;
+            }
+            // '' means any provider / any number. Anything else must be a plain ID or digit string.
+            if (($route['provider'] !== '' && !preg_match(self::PROVIDER_PATTERN, $route['provider']))
+                || ($route['number'] !== '' && !preg_match(self::NUMBER_PATTERN, $route['number']))) {
+                continue;
+            }
+            $this->inboundTargets[] = ['survey_id' => $target['survey_id']] + $route;
+        }
+        // Most specific route first, as the core picks routes: provider and number, number only, provider only, any.
+        usort($this->inboundTargets, fn (array $a, array $b): int =>
+            [($b['number'] !== '') * 2 + ($b['provider'] !== ''), $a['survey_id']]
+            <=> [($a['number'] !== '') * 2 + ($a['provider'] !== ''), $b['survey_id']]);
+
+        $this->exclusions = array_values(array_filter($exclusions, fn (string $n): bool => preg_match(self::NUMBER_PATTERN, $n) === 1));
+    }
+
+    /**
+     * @param callable(int): ?string $promptPath
+     */
+    public static function fromDatabases(PDO $module, PDO $config, callable $promptPath): self
     {
-        $id = self::safeId($contextId);
-        return 'same => n,Gosub(' . self::CTX_IN_ENTRY . ',s,1(' . $id . '))' . "\n\t";
+        $repository = new SurveyRepository($module);
+        $targets = $repository->activeTargets();
+        $inboundIds = array_values(array_map(fn (array $t): int => $t['route_id'],
+            array_filter($targets, fn (array $t): bool => $t['direction'] === 'in')));
+
+        return new self(
+            $repository->callable(),
+            $targets,
+            SurveyRepository::incomingRoutes($config, $inboundIds),
+            $promptPath,
+            $repository->exclusions(),
+            (int)ModuleSettings::load($module)['max_concurrent'],
+        );
+    }
+
+    /**
+     * Inbound, after the route's dial (inside [<context>-incoming]). Gosub, not
+     * Goto, so the admin's own after-dial-custom dialplan still runs.
+     */
+    public function incomingAfterDial(): string
+    {
+        return $this->inboundTargets === [] ? '' : 'same => n,Gosub(' . self::CTX_IN_ENTRY . ',s,1)' . "\n\t";
     }
 
     /**
@@ -62,16 +172,20 @@ final class DialplanBuilder
      * first such time is copied to the caller's channel as CF_ANSWER_AT, which
      * is the module's proof that a person answered.
      */
-    public static function internalUsersPreDial(): string
+    public function internalUsersPreDial(): string
     {
+        if ($this->inboundTargets === []) {
+            return '';
+        }
+
         return 'same => n,ExecIf($["${FROM_DID}x" != "x"]?Set(CHANNEL(hangup_handler_push)='
             . self::CTX_AGENT_IN_END . ',s,1))' . "\n\t";
     }
 
     /**
-     * Outbound route, before its Dial: send the customer to the survey when the
-     * agent hangs up (F), and pass the route ID and the dialed number to the
-     * customer's channel.
+     * Outbound route, before its Dial, on targeted routes only: send the
+     * customer to the survey when the agent hangs up (F), and pass the survey,
+     * the route and the dialed number to the customer's channel.
      *
      * Talk time: when the agent hangs up, a handler on the agent's channel
      * stores the agent's ANSWEREDTIME in astdb under the call's linkedid, and
@@ -79,94 +193,87 @@ final class DialplanBuilder
      * first, the one case where the customer goes on to the survey, so no key
      * is left behind. The customer's CDR(answer) can't be used: the CDR record
      * is replaced moments after the bridge ends.
+     *
+     * @param array<string, mixed> $rout
      */
-    public static function outboundBeforeDial(array $rout): string
+    public function outboundBeforeDial(array $rout): string
     {
         $routeId = (int)($rout['id'] ?? 0);
+        $surveyId = $this->outboundTargets[$routeId] ?? null;
+        if ($surveyId === null) {
+            return '';
+        }
+
         return 'same => n,Set(DOPTIONS=${DOPTIONS}F(' . self::CTX_OUT_ENTRY . '^s^1))' . "\n\t"
+            . 'same => n,Set(__CF_OUT_SURVEY=' . $surveyId . ')' . "\n\t"
             . 'same => n,Set(__CF_OUT_ROUTE=' . $routeId . ')' . "\n\t"
             . 'same => n,Set(__CF_CUSTOMER=${FILTER(0-9+,${number})})' . "\n\t"
             . 'same => n,Set(CHANNEL(hangup_handler_push)=' . self::CTX_AGENT_OUT_END . ',s,1)' . "\n\t";
     }
 
     /** The module's own contexts. None of them is included in a routable context. */
-    public static function contexts(): string
+    public function contexts(): string
     {
-        $survey = SurveyCatalog::builtIn();
-        $minTalk = (int)$survey['min_talk_seconds'];
-        $surveyId = (int)$survey['id'];
-        [$q1Min, $q1Max] = [(int)$survey['questions'][1]['min'], (int)$survey['questions'][1]['max']];
+        if ($this->surveys === []) {
+            return '';
+        }
+        $conf = $this->sharedContexts();
+        if ($this->inboundTargets !== []) {
+            $conf .= $this->inboundContexts();
+        }
+        if ($this->outboundTargets !== []) {
+            $conf .= $this->outboundContexts();
+        }
+        foreach ($this->surveys as $survey) {
+            $conf .= $this->surveyContexts($survey);
+        }
 
+        return $conf;
+    }
+
+    public static function surveyContext(int $surveyId): string
+    {
+        return "call-feedback-survey-$surveyId";
+    }
+
+    private static function questionContext(int $surveyId, int $position): string
+    {
+        return "call-feedback-q-$surveyId-$position";
+    }
+
+    /** Whether a resolved sound-file path may be written into the dialplan. */
+    public static function isUsablePath(?string $path): bool
+    {
+        return $path !== null && preg_match(self::PATH_PATTERN, $path) === 1;
+    }
+
+    /** @param callable(int): ?string $promptPath */
+    private static function path(callable $promptPath, mixed $id): ?string
+    {
+        if ($id === null || (int)$id <= 0) {
+            return null;
+        }
+        $path = $promptPath((int)$id);
+
+        return self::isUsablePath($path) ? $path : null;
+    }
+
+    /**
+     * Answers, exclusions, the test-call entry and the end-of-call hand-off.
+     * A test call is an AMI Originate from the survey editor that rings an
+     * extension and, once answered, enters [call-feedback-test] with the
+     * survey ID as the extension. Nothing routes there otherwise.
+     */
+    private function sharedContexts(): string
+    {
         $c = self::COMMON;
-        $in = self::CTX_IN_ENTRY;
-        $out = self::CTX_OUT_ENTRY;
-        $surveyCtx = self::CTX_SURVEY;
         $answer = self::CTX_ANSWER;
-        $nps = self::CTX_NPS;
+        $excluded = self::CTX_EXCLUDED;
+        $test = self::CTX_TEST;
         $hangup = self::CTX_HANGUP;
-        $agentIn = self::CTX_AGENT_IN_END;
-        $agentOut = self::CTX_AGENT_OUT_END;
-        $dbTalk = self::DB_TALK;
         $agi = self::AGI_SCRIPT;
 
-        return <<<DIALPLAN
-
-[$in]
-exten => s,1,Log(NOTICE,CFPROBE event=in_entry ctx=\${ARG1} did=\${FROM_DID} m_dialstatus=\${M_DIALSTATUS} answer_at=\${CF_ANSWER_AT} $c)
-	same => n,GotoIf(\$["\${M_DIALSTATUS}" != "ANSWER"]?not_answered)
-	same => n,ExecIf(\$["\${CF_ANSWER_AT}x" == "x"]?Wait(0.5))
-	same => n,GotoIf(\$["\${CF_ANSWER_AT}x" == "x"]?no_agent)
-	same => n,Set(CF_DIR=in)
-	same => n,Set(CF_CTX=\${ARG1})
-	same => n,Set(CF_DID=\${FILTER(0-9*#+,\${FROM_DID})})
-	same => n,Set(CF_CALLER=\${FILTER(0-9+,\${CALLERID(num)})})
-	same => n,Set(CF_TALK=\$[\${EPOCH} - \${CF_ANSWER_AT}])
-	same => n,Log(NOTICE,CFPROBE event=in_talk cf_talk=\${CF_TALK} answer_at=\${CF_ANSWER_AT} $c)
-	same => n,Gosub($surveyCtx,s,1)
-	same => n,Return()
-	same => n(not_answered),Log(NOTICE,CFPROBE event=skip reason=not_answered $c)
-	same => n,Return()
-	same => n(no_agent),Log(NOTICE,CFPROBE event=skip reason=no_agent $c)
-	same => n,Return()
-
-[$out]
-exten => s,1,Log(NOTICE,CFPROBE event=out_entry route=\${CF_OUT_ROUTE} now=\${EPOCH} $c)
-	same => n,Set(CF_DIR=out)
-	same => n,Set(CF_ROUTE=\${CF_OUT_ROUTE})
-	same => n,Set(CF_CALLER=\${CF_CUSTOMER})
-	same => n,Set(CF_WAITS=0)
-	same => n(read),Set(CF_TALK=\${DB_DELETE($dbTalk/\${CHANNEL(linkedid)})})
-	same => n,GotoIf(\$["\${CF_TALK}x" != "x"]?talk)
-	same => n,Set(CF_WAITS=\$[\${CF_WAITS} + 1])
-	same => n,GotoIf(\$[\${CF_WAITS} > 8]?no_answer)
-	same => n,Wait(0.25)
-	same => n,Goto(read)
-	same => n(talk),Set(CF_ANSWER_AT=\$[\${EPOCH} - \${CF_TALK}])
-	same => n,Log(NOTICE,CFPROBE event=out_talk cf_talk=\${CF_TALK} waits=\${CF_WAITS} $c)
-	same => n,Gosub($surveyCtx,s,1)
-	same => n,Hangup()
-	same => n(no_answer),Log(NOTICE,CFPROBE event=skip reason=no_answer $c)
-	same => n,Hangup()
-
-[$surveyCtx]
-exten => s,1,Set(CF_V=1)
-	same => n,Set(CF_SURVEY=$surveyId)
-	same => n,Set(CHANNEL(hangup_handler_push)=$hangup,s,1)
-	same => n,GotoIf(\$[\${CF_TALK} < $minTalk]?too_short)
-	same => n,Set(CF_STATUS=offered)
-	same => n,Set(CF_OFFERED=\${EPOCH})
-	same => n,Log(NOTICE,CFPROBE event=offered dir=\${CF_DIR} $c)
-	same => n,Read(CF_KEY,beep,1,,1,6)
-	same => n,ExecIf(\$[\${REGEX("^[$q1Min-$q1Max]$" \${CF_KEY})}]?Gosub($answer,s,1(1,\${CF_KEY})))
-	same => n,Gosub($nps,s,1)
-	same => n,ExecIf(\$["\${CF_NPS}x" != "x"]?Gosub($answer,s,1(2,\${CF_NPS})))
-	same => n,ExecIf(\$["\${CF_A2}x" != "x"]?Set(CF_STATUS=completed))
-	same => n,Playback(beep)
-	same => n,Return()
-	same => n(too_short),Set(CF_STATUS=skipped)
-	same => n,Set(CF_REASON=too_short)
-	same => n,Log(NOTICE,CFPROBE event=skip reason=too_short cf_talk=\${CF_TALK} $c)
-	same => n,Return()
+        $conf = <<<DIALPLAN
 
 [$answer]
 exten => s,1,Set(CF_A\${ARG1}=\${ARG2})
@@ -174,22 +281,78 @@ exten => s,1,Set(CF_A\${ARG1}=\${ARG2})
 	same => n,ExecIf(\$["\${CF_STATUS}" == "offered"]?Set(CF_STATUS=started))
 	same => n,Return()
 
-[$nps]
-exten => s,1,Set(TIMEOUT(digit)=2)
-	same => n,Set(TIMEOUT(response)=6)
-	same => n,Playback(beep)
-	same => n,WaitExten(6)
-exten => _[0-9],1,Set(CF_NPS=\${EXTEN})
-	same => n,Return()
-exten => 10,1,Set(CF_NPS=10)
-	same => n,Return()
-exten => t,1,Return()
-exten => i,1,Return()
+[$test]
+exten => _X!,1,Set(CF_TEST=1)
+	same => n,Set(CF_DIR=in)
+	same => n,Set(CF_CALLER=\${FILTER(0-9,\${CF_TEST_EXT})})
+	same => n,Set(CF_ANSWER_AT=\${EPOCH})
+	same => n,Set(CF_TALK=0)
+	same => n,Verbose(3,CFPROBE event=test_entry survey=\${EXTEN} $c)
+	same => n,GosubIf(\$[\${DIALPLAN_EXISTS(call-feedback-survey-\${FILTER(0-9,\${EXTEN})},s,1)}]?call-feedback-survey-\${FILTER(0-9,\${EXTEN})},s,1)
+	same => n,Hangup()
 
 [$hangup]
-exten => s,1,Log(NOTICE,CFPROBE event=hangup dir=\${CF_DIR} status=\${CF_STATUS} reason=\${CF_REASON} a1=\${CF_A1} a2=\${CF_A2} talk=\${CF_TALK} $c)
+exten => s,1,Verbose(3,CFPROBE event=hangup dir=\${CF_DIR} survey=\${CF_SURVEY} status=\${CF_STATUS} reason=\${CF_REASON} a1=\${CF_A1} a2=\${CF_A2} a3=\${CF_A3} talk=\${CF_TALK} test=\${CF_TEST} $c)
 	same => n,AGI($agi)
 	same => n,Return()
+
+[$excluded]
+
+DIALPLAN;
+        foreach ($this->exclusions as $number) {
+            $conf .= "exten => $number,1,Return()\n";
+        }
+
+        return $conf;
+    }
+
+    private function inboundContexts(): string
+    {
+        $c = self::COMMON;
+        $in = self::CTX_IN_ENTRY;
+        $match = self::CTX_IN_MATCH;
+        $agentIn = self::CTX_AGENT_IN_END;
+
+        $conf = <<<DIALPLAN
+
+[$in]
+exten => s,1,Verbose(3,CFPROBE event=in_entry did=\${FROM_DID} provider=\${providerID} m_dialstatus=\${M_DIALSTATUS} answer_at=\${CF_ANSWER_AT} $c)
+	same => n,GotoIf(\$["\${M_DIALSTATUS}" != "ANSWER"]?not_answered)
+	same => n,ExecIf(\$["\${CF_ANSWER_AT}x" == "x"]?Wait(0.5))
+	same => n,GotoIf(\$["\${CF_ANSWER_AT}x" == "x"]?no_agent)
+	same => n,Set(CF_DIR=in)
+	same => n,Set(CF_CTX=\${FILTER(A-Za-z0-9_-,\${providerID})})
+	same => n,Set(CF_DID=\${FILTER(0-9*#+,\${FROM_DID})})
+	same => n,Set(CF_CALLER=\${FILTER(0-9+,\${CALLERID(num)})})
+	same => n,Set(CF_TALK=\$[\${EPOCH} - \${CF_ANSWER_AT}])
+	same => n,Verbose(3,CFPROBE event=in_talk cf_talk=\${CF_TALK} answer_at=\${CF_ANSWER_AT} $c)
+	same => n,Goto($match,s,1)
+	same => n(not_answered),Verbose(3,CFPROBE event=skip reason=not_answered $c)
+	same => n,Return()
+	same => n(no_agent),Verbose(3,CFPROBE event=skip reason=no_agent $c)
+	same => n,Return()
+
+[$match]
+
+DIALPLAN;
+        $first = true;
+        foreach ($this->inboundTargets as $target) {
+            $conditions = [];
+            if ($target['provider'] !== '') {
+                $conditions[] = '"${providerID}" == "' . $target['provider'] . '"';
+            }
+            if ($target['number'] !== '') {
+                $conditions[] = '"${FROM_DID}" == "' . $target['number'] . '"';
+            }
+            $condition = $conditions === [] ? '1' : implode(' & ', $conditions);
+            $conf .= ($first ? 'exten => s,1,' : "\tsame => n,")
+                . 'GotoIf($[' . $condition . ']?' . self::surveyContext($target['survey_id']) . ',s,1)' . "\n";
+            $first = false;
+        }
+        $conf .= "\tsame => n,Verbose(3,CFPROBE event=skip reason=not_targeted $c)\n";
+        $conf .= "\tsame => n,Return()\n";
+
+        $conf .= <<<DIALPLAN
 
 [$agentIn]
 exten => s,1,GotoIf(\$["\${DIALSTATUS}" != "ANSWER"]?done)
@@ -200,6 +363,41 @@ exten => s,1,GotoIf(\$["\${DIALSTATUS}" != "ANSWER"]?done)
 	same => n,Set(EXPORT(\${FROM_CHAN},CF_ANSWER_AT)=\${at})
 	same => n(done),Return()
 
+DIALPLAN;
+
+        return $conf;
+    }
+
+    private function outboundContexts(): string
+    {
+        $c = self::COMMON;
+        $out = self::CTX_OUT_ENTRY;
+        $agentOut = self::CTX_AGENT_OUT_END;
+        $dbTalk = self::DB_TALK;
+
+        // The customer arrives here by an F() jump, not a Gosub: no LOCAL() variables.
+        return <<<DIALPLAN
+
+[$out]
+exten => s,1,Verbose(3,CFPROBE event=out_entry survey=\${CF_OUT_SURVEY} route=\${CF_OUT_ROUTE} $c)
+	same => n,Set(CF_DIR=out)
+	same => n,Set(CF_ROUTE=\${FILTER(0-9,\${CF_OUT_ROUTE})})
+	same => n,Set(CF_CALLER=\${CF_CUSTOMER})
+	same => n,Set(CF_WAITS=0)
+	same => n(read),Set(CF_TALK=\${DB_DELETE($dbTalk/\${CHANNEL(linkedid)})})
+	same => n,GotoIf(\$["\${CF_TALK}x" != "x"]?talk)
+	same => n,Set(CF_WAITS=\$[\${CF_WAITS} + 1])
+	same => n,GotoIf(\$[\${CF_WAITS} > 8]?no_answer)
+	same => n,Wait(0.25)
+	same => n,Goto(read)
+	same => n(talk),Set(CF_ANSWER_AT=\$[\${EPOCH} - \${CF_TALK}])
+	same => n,Verbose(3,CFPROBE event=out_talk cf_talk=\${CF_TALK} waits=\${CF_WAITS} $c)
+	same => n,Set(CF_SURVEY_CTX=call-feedback-survey-\${FILTER(0-9,\${CF_OUT_SURVEY})})
+	same => n,GosubIf(\$[\${DIALPLAN_EXISTS(\${CF_SURVEY_CTX},s,1)}]?\${CF_SURVEY_CTX},s,1)
+	same => n,Hangup()
+	same => n(no_answer),Verbose(3,CFPROBE event=skip reason=no_answer $c)
+	same => n,Hangup()
+
 [$agentOut]
 exten => s,1,GotoIf(\$["\${DIALSTATUS}" != "ANSWER"]?done)
 	same => n,GotoIf(\$["\${CHANNEL(hangupsource)}" != "\${CHANNEL}"]?done)
@@ -209,10 +407,137 @@ exten => s,1,GotoIf(\$["\${DIALSTATUS}" != "ANSWER"]?done)
 DIALPLAN;
     }
 
-    /** Context IDs come from the core (provider IDs, "none"); keep only safe characters. */
-    private static function safeId(string $id): string
+    /**
+     * One survey version: the rules, then each question, then thanks. A skipped
+     * call returns at once with its reason; the hangup handler reports it.
+     *
+     * @param array<string, mixed> $survey
+     */
+    private function surveyContexts(array $survey): string
     {
-        $clean = preg_replace('/[^A-Za-z0-9_-]/', '', $id);
-        return $clean === '' ? 'none' : $clean;
+        $id = (int)$survey['id'];
+        $c = self::COMMON;
+        $minTalk = max(0, (int)$survey['min_talk_seconds']);
+        $sample = max(0, min(100, (int)$survey['sample_percent']));
+        $capSeconds = max(0, (int)$survey['frequency_cap_days']) * 86400;
+        $max = max(1, $this->maxConcurrent);
+        $dbCap = self::DB_CAP;
+        $group = self::GROUP;
+        $excluded = self::CTX_EXCLUDED;
+        $hangup = self::CTX_HANGUP;
+        $language = $survey['language'];
+
+        $lines = [
+            'Set(CF_V=' . Handoff::VERSION . ')',
+            "Set(CF_SURVEY=$id)",
+            "Set(CHANNEL(hangup_handler_push)=$hangup,s,1)",
+            'Set(CF_NUM=${FILTER(0-9,${CF_CALLER})})',
+            // A test call from the survey editor skips the rules.
+            'GotoIf($["${CF_TEST}" == "1"]?ask)',
+            "GotoIf(\$[0\${CF_TALK} < $minTalk]?too_short)",
+            "GotoIf(\$[\"\${CF_NUM}x\" != \"x\" & \${DIALPLAN_EXISTS($excluded,\${CF_NUM},1)}]?excluded)",
+        ];
+        if ($capSeconds > 0) {
+            $lines[] = "ExecIf(\$[\"\${CF_NUM}x\" != \"x\"]?Set(CF_LAST=\${DB($dbCap/\${CF_NUM})}))";
+            $lines[] = "GotoIf(\$[\"\${CF_LAST}x\" != \"x\" & \${EPOCH} - 0\${CF_LAST} < $capSeconds]?capped)";
+        }
+        if ($sample < 100) {
+            $lines[] = "GotoIf(\$[\${RAND(1,100)} > $sample]?sampled_out)";
+        }
+        $lines[] = "Set(GROUP($group)=surveys)";
+        $lines[] = "GotoIf(\$[\${GROUP_COUNT(surveys@$group)} > $max]?concurrency)";
+        $lines[] = ['ask', 'Set(CF_STATUS=offered)'];
+        $lines[] = 'Set(CF_OFFERED=${EPOCH})';
+        if ($capSeconds > 0) {
+            $lines[] = "ExecIf(\$[\"\${CF_NUM}x\" != \"x\" & \"\${CF_TEST}\" != \"1\"]?Set(DB($dbCap/\${CF_NUM})=\${EPOCH}))";
+        }
+        $lines[] = "Set(CHANNEL(language)=$language)";
+        $lines[] = "Verbose(3,CFPROBE event=offered dir=\${CF_DIR} survey=$id $c)";
+        if ($survey['paths']['intro'] !== null) {
+            $lines[] = 'Playback(' . $survey['paths']['intro'] . ')';
+        }
+        $positions = array_keys($survey['questions']);
+        sort($positions);
+        foreach ($positions as $position) {
+            $lines[] = 'Gosub(' . self::questionContext($id, $position) . ',s,1)';
+            // No answer to the headline question: don't go on to the others.
+            if ($position === $positions[0]) {
+                $lines[] = "GotoIf(\$[\"\${CF_A$position}x\" == \"x\"]?done)";
+            }
+        }
+        if ($positions !== []) {
+            $last = end($positions);
+            $lines[] = "ExecIf(\$[\"\${CF_A$last}x\" != \"x\"]?Set(CF_STATUS=completed))";
+        }
+        $lines[] = ['done', $survey['paths']['thanks'] !== null ? 'Playback(' . $survey['paths']['thanks'] . ')' : 'NoOp()'];
+        $lines[] = 'Return()';
+        foreach (['too_short', 'excluded', 'capped', 'sampled_out', 'concurrency'] as $reason) {
+            $lines[] = [$reason, 'Set(CF_STATUS=skipped)'];
+            $lines[] = "Set(CF_REASON=$reason)";
+            $lines[] = "Verbose(3,CFPROBE event=skip reason=$reason cf_talk=\${CF_TALK} $c)";
+            $lines[] = 'Return()';
+        }
+
+        $conf = "\n[" . self::surveyContext($id) . "]\n" . self::priorities('s', $lines);
+        foreach ($positions as $position) {
+            $conf .= $this->questionContexts($survey, $position);
+        }
+
+        return $conf;
+    }
+
+    /**
+     * One question: play the prompt, wait for a key of the scale, retry on an
+     * invalid key or silence, give up after the retries.
+     *
+     * @param array<string, mixed> $survey
+     */
+    private function questionContexts(array $survey, int $position): string
+    {
+        $question = $survey['questions'][$position];
+        $scale = (string)$question['scale'];
+        $timeout = max(1, min(30, (int)$question['timeout_seconds']));
+        $retries = max(0, min(5, (int)$question['retries']));
+        $digitTimeout = ScalePresets::needsDigitTimeout($scale) ? self::DIGIT_TIMEOUT : 1;
+        $prompt = $question['path'] ?? 'beep';
+        $invalid = $survey['paths']['invalid'];
+
+        $conf = "\n[" . self::questionContext((int)$survey['id'], $position) . "]\n" . self::priorities('s', [
+            'Set(CF_TRY=0)',
+            ['ask', "Set(TIMEOUT(digit)=$digitTimeout)"],
+            "Set(TIMEOUT(response)=$timeout)",
+            "Background($prompt)",
+            "WaitExten($timeout)",
+            ['retry', 'Set(CF_TRY=$[${CF_TRY} + 1])'],
+            "GotoIf(\$[\${CF_TRY} > $retries]?give_up)",
+            $invalid !== null ? "Playback($invalid)" : 'NoOp()',
+            'Goto(ask)',
+            ['give_up', 'Return()'],
+        ]);
+        foreach (ScalePresets::keys($scale) as $key => $value) {
+            $conf .= "exten => $key,1,Gosub(" . self::CTX_ANSWER . ",s,1($position,$value))\n\tsame => n,Return()\n";
+        }
+        $conf .= "exten => i,1,Goto(s,retry)\nexten => t,1,Goto(s,retry)\n";
+
+        return $conf;
+    }
+
+    /**
+     * One extension's priorities. A line is an application string, or
+     * [label, application] for a labelled priority.
+     *
+     * @param list<string|array{string, string}> $lines
+     */
+    private static function priorities(string $exten, array $lines): string
+    {
+        $out = '';
+        foreach ($lines as $i => $line) {
+            [$label, $app] = is_array($line) ? $line : [null, $line];
+            $priority = $i === 0 ? '1' : 'n';
+            $prefix = $i === 0 ? "exten => $exten," : "\tsame => ";
+            $out .= $prefix . $priority . ($label !== null ? "($label)" : '') . ',' . $app . "\n";
+        }
+
+        return $out;
     }
 }

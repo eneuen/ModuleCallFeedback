@@ -51,16 +51,25 @@ Fixtures are written to `tests/fixtures/cdr/<scenario>.json`. Each one holds the
 
 `setup` generates new SIP passwords each time and keeps them in `.callsim-state.json` next to the script. That file is local and never committed.
 
-## Survey call-path probe
+## Survey probe
 
-`probe.py` checks the module's survey with real calls. It needs the module installed (its dialplan writes `CFPROBE` lines to Asterisk's notice log at every survey decision) and `callsim.py setup` done first, with the same environment variables.
+`probe.py` checks the module's survey with real calls. Its dialplan writes `CFPROBE` lines to Asterisk's verbose log at every survey decision; the probe reads them and the module's database inside the PBX container.
+
+Before running it, run `callsim.py setup`, then create and activate one survey in Call Feedback that the scenarios can answer:
+
+- question 1 CSAT (1–5), question 2 NPS (0–10), both with 0 retries;
+- short prompts (a beep is enough), so the scenarios' key timings fit;
+- minimum talk time 4 s and no frequency cap (every scenario calls from the same number);
+- running on the CallSim incoming routes (5551000, 5551001) and the CallSim outbound route.
 
 ```bash
 python3 tools/callsim/probe.py list         # scenarios
 python3 tools/callsim/probe.py run          # all scenarios, or name some
 ```
 
-Each scenario places a call, presses survey keys from the customer's side once the agent hangs up, collects the `CFPROBE` lines the call produced, and checks them: whether the survey was offered, the agent's talk time, and that the survey's hangup handler ran once. It then reads the module's database inside the PBX container and checks what the worker stored: the session's status and answers, its attribution from the CDR (agent, queue, talk time; this waits up to about a minute for the worker), and the too-short skip count. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed). One scenario adds an IVR action (4 → hangup) for its own duration and removes it afterwards.
+Each scenario places a call, presses survey keys from the customer's side once the agent hangs up, and checks what happened: whether the survey was offered, the agent's talk time, that the survey's hangup handler ran once, and what the worker stored (session status and answers, attribution from the CDR, follow-ups, skip counts). Attribution waits up to about a minute for the worker.
+
+Some scenarios use the module page's own actions with the admin's token, as the page does: a test call from the survey editor, an excluded number, and a frequency cap. They put the settings back afterwards. One scenario adds an IVR action (4 → hangup) for its own duration. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed).
 
 ## Files
 

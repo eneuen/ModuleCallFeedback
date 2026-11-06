@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace Modules\ModuleCallFeedback\Setup;
 
+use MikoPBX\Common\Models\PbxSettings;
 use MikoPBX\Core\System\Directories;
 use MikoPBX\Core\System\SystemMessages;
 use MikoPBX\Core\System\Util;
@@ -19,10 +20,28 @@ use Throwable;
  */
 class PbxExtensionSetup extends PbxExtensionSetupBase
 {
+    /** The sidebar entry, in the modules group with a speech-bubbles icon. */
+    public function addToSidebar(): bool
+    {
+        $key = "AdditionalMenuItem$this->moduleUniqueID";
+        $menuSettings = PbxSettings::findFirstByKey($key) ?? new PbxSettings();
+        $menuSettings->key = $key;
+        $menuSettings->value = json_encode([
+            'uniqid'        => $this->moduleUniqueID,
+            'group'         => 'modules',
+            'iconClass'     => 'comments outline',
+            'caption'       => "Breadcrumb$this->moduleUniqueID",
+            'showAtSidebar' => true,
+        ]);
+
+        return $menuSettings->save();
+    }
+
     /**
      * Also removes what lives outside the module folder: the AGI link (the
      * core creates it on install but never removes it) and the module's astdb
-     * family.
+     * families: the outbound talk-time hand-over and the frequency cap, which
+     * holds phone numbers.
      */
     public function unInstallFiles(bool $keepSettings = false): bool
     {
@@ -30,10 +49,12 @@ class PbxExtensionSetup extends PbxExtensionSetupBase
         if (is_link($link) && str_starts_with((string)readlink($link), $this->moduleDir . '/')) {
             unlink($link);
         }
-        try {
-            Util::getAstManager('off')->sendRequestTimeout('DBDelTree', ['Family' => DialplanBuilder::DB_TALK]);
-        } catch (Throwable $e) {
-            SystemMessages::sysLogMsg(static::class, 'Could not clear the astdb family: ' . $e->getMessage(), LOG_WARNING);
+        foreach ([DialplanBuilder::DB_TALK, DialplanBuilder::DB_CAP] as $family) {
+            try {
+                Util::getAstManager('off')->sendRequestTimeout('DBDelTree', ['Family' => $family]);
+            } catch (Throwable $e) {
+                SystemMessages::sysLogMsg(static::class, "Could not clear the astdb family $family: " . $e->getMessage(), LOG_WARNING);
+            }
         }
 
         return parent::unInstallFiles($keepSettings);

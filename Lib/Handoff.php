@@ -24,7 +24,7 @@ final class Handoff
     public const array STATUSES = ['offered', 'started', 'completed', 'skipped'];
 
     /** Why an eligible call was not asked. Rule skips only; unanswered calls are not recorded. */
-    public const array SKIP_REASONS = ['too_short'];
+    public const array SKIP_REASONS = ['too_short', 'excluded', 'capped', 'sampled_out', 'concurrency'];
 
     public const array DIRECTIONS = ['in', 'out'];
 
@@ -44,6 +44,7 @@ final class Handoff
         'CF_ANSWER_AT' => ['answer_at', '/^[0-9]{0,12}$/'],
         'CF_TALK'      => ['talk', '/^[0-9]{0,7}$/'],
         'CF_OFFERED'   => ['offered_at', '/^[0-9]{0,12}$/'],
+        'CF_TEST'      => ['is_test', '/^1?$/'],
     ];
 
     private const string LINKEDID_PATTERN = '/^[A-Za-z0-9._-]{1,80}$/';
@@ -148,6 +149,9 @@ final class Handoff
         if ($out['status'] === 'skipped' && $cleanAnswers !== []) {
             throw new InvalidArgumentException('A skipped call has no answers');
         }
+        if ($out['is_test'] === '1' && $out['status'] === 'skipped') {
+            throw new InvalidArgumentException('A test call is never skipped');
+        }
         ksort($cleanAnswers);
 
         return [
@@ -164,6 +168,7 @@ final class Handoff
             'talk'       => self::intOrNull($out['talk']),
             'offered_at' => self::intOrNull($out['offered_at']),
             'ended_at'   => (int)$endedAt,
+            'is_test'    => $out['is_test'] === '1',
             'answers'    => $cleanAnswers,
         ];
     }
@@ -176,6 +181,7 @@ final class Handoff
             $wire[$field] = $record[$field] === null ? '' : (string)$record[$field];
         }
         $wire['v'] = (string)self::VERSION;
+        $wire['is_test'] = $record['is_test'] ? '1' : '';
         $wire['reason'] = (string)($record['reason'] ?? '');
         $wire['answers'] = [];
         foreach ($record['answers'] as $position => $answer) {

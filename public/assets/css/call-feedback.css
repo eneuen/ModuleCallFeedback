@@ -1,0 +1,46 @@
+/* Call Feedback for MikoPBX (GPL-3.0-or-later). */
+.cf-page .cf-hidden { display: none !important; }
+.cf-page .cf-section-head { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 1.5em 0 .75em; }
+.cf-page .cf-section-head:first-child { margin-top: 0; }
+.cf-page .cf-section-head .header { margin: 0; }
+.cf-page .cf-inline-form { margin-bottom: 1em; }
+.cf-page .cf-form-buttons { display: flex !important; align-items: flex-end; gap: .5em; }
+.cf-page .cf-table td.cf-num, .cf-page .cf-table th.cf-num { text-align: right; white-space: nowrap; }
+.cf-page .cf-table tr.cf-clickable { cursor: pointer; }
+.cf-page .cf-muted { color: #7b8794; }
+.cf-page .cf-note { color: #616e7c; font-size: .92em; margin-top: .5em; }
+.cf-page .cf-editor-head { display: flex; align-items: center; gap: .75em; flex-wrap: wrap; margin-bottom: 1em; }
+.cf-page .cf-editor-head .header { margin: 0; }
+.cf-page .cf-editor-actions { display: flex; flex-wrap: wrap; gap: .5em; margin-top: 1.5em; }
+.cf-page .cf-question { border: 1px solid #e4e7eb; border-radius: 4px; padding: 1em; margin-bottom: .75em; }
+.cf-page .cf-question-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5em; font-weight: 600; }
+.cf-page .cf-targets { columns: 2 22em; }
+.cf-page .cf-targets .field { break-inside: avoid; }
+.cf-page .cf-problems ul { margin: .25em 0 0; }
+.cf-page .cf-exclusions { max-height: 22em; overflow-y: auto; }
+.cf-page form + div, .cf-page .cf-section-gap { margin-top: 1.5em; }
+.cf-page #cf-settings > div { margin-top: 2em; }
+
+/* Results */
+.cf-page .cf-toolbar { display: flex; flex-wrap: wrap; gap: .5em; align-items: center; margin-bottom: 1em; }
+.cf-page .cf-toolbar select, .cf-page .cf-toolbar input { width: auto !important; }
+.cf-page .cf-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75em; }
+@media (max-width: 1100px) { .cf-page .cf-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .cf-page .cf-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cf-page .cf-kpi { border: 1px solid #e4e7eb; border-radius: 6px; padding: .9em 1em; }
+.cf-page .cf-kpi-label { color: #616e7c; font-size: .9em; }
+.cf-page .cf-kpi-value { font-size: 1.9em; font-weight: 700; color: #1f2933; line-height: 1.3; }
+.cf-page .cf-kpi-value.cf-empty { color: #9aa5b1; }
+.cf-page .cf-kpi-sub { color: #7b8794; font-size: .85em; }
+.cf-page .cf-change.good { color: #247548; }
+.cf-page .cf-change.bad { color: #ab2f2f; }
+.cf-page .cf-chart-head { margin: 1.75em 0 .5em; }
+.cf-page .cf-chart { height: 280px; }
+.cf-page .cf-chart-short { height: 220px; }
+.cf-page .cf-bar { height: .6em; border-radius: 3px; background: #2185d0; min-width: 2px; }
+.cf-page .cf-bar-cell { width: 35%; }
+.cf-page tr.cf-low-sample td { color: #9aa5b1; }
+.cf-page tr.cf-low-sample .cf-bar { background: #cbd2d9; }
+.cf-page .cf-trademark { color: #9aa5b1; font-size: .8em; margin-top: 2em; }
+.cf-page .cf-followup-edit { width: 30%; }
+.cf-page .cf-followup-edit textarea { margin: .4em 0; }

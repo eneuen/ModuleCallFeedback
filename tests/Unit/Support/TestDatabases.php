@@ -71,6 +71,43 @@ final class TestDatabases
         }
     }
 
+    /**
+     * A configuration database with the core tables the module reads: routes,
+     * providers and installed modules. The routes match the CallSim layout.
+     */
+    public function configDatabase(): string
+    {
+        $file = $this->tempFile();
+        $pdo = self::writable($file);
+        $pdo->exec('CREATE TABLE m_IncomingRoutingTable (id INTEGER PRIMARY KEY, rulename VARCHAR, number VARCHAR,
+            extension VARCHAR, provider VARCHAR, priority INTEGER, timeout INTEGER, action VARCHAR, note VARCHAR,
+            audio_message_id VARCHAR)');
+        $pdo->exec("INSERT INTO m_IncomingRoutingTable (id, rulename, number, extension, provider, priority, action) VALUES
+            (1, 'default action', '', '201', '', 9999, 'extension'),
+            (39, 'CallSim 5551000', '5551000', '3200', 'SIP-TRUNK-2EC28F63', 1001, ''),
+            (40, 'CallSim 5551001', '5551001', '301', 'SIP-TRUNK-2EC28F63', 1002, ''),
+            (41, 'Any number from the trunk', '', '301', 'SIP-TRUNK-2EC28F63', 1003, ''),
+            (42, 'Any call', '', '301', '', 1004, '')");
+        $pdo->exec('CREATE TABLE m_OutgoingRoutingTable (id INTEGER PRIMARY KEY, rulename VARCHAR, providerid VARCHAR,
+            priority VARCHAR, numberbeginswith VARCHAR, restnumbers VARCHAR, trimfrombegin VARCHAR, prepend VARCHAR, note VARCHAR)');
+        $pdo->exec("INSERT INTO m_OutgoingRoutingTable (id, rulename, providerid, priority, numberbeginswith, restnumbers)
+            VALUES (35, 'CallSim outbound', 'SIP-TRUNK-2EC28F63', '1', '555', '7')");
+        $pdo->exec('CREATE TABLE m_Providers (id INTEGER PRIMARY KEY, uniqid VARCHAR, type VARCHAR)');
+        $pdo->exec("INSERT INTO m_Providers (uniqid, type) VALUES ('SIP-TRUNK-2EC28F63', 'SIP')");
+        $pdo->exec('CREATE TABLE m_Sip (id INTEGER PRIMARY KEY, uniqid VARCHAR, description VARCHAR, host VARCHAR)');
+        $pdo->exec("INSERT INTO m_Sip (uniqid, description, host) VALUES ('SIP-TRUNK-2EC28F63', 'CallSim carrier', '192.0.2.2')");
+        $pdo->exec('CREATE TABLE m_SoundFiles (id INTEGER PRIMARY KEY, name VARCHAR, path VARCHAR, category VARCHAR)');
+        $pdo->exec("INSERT INTO m_SoundFiles (id, name, path, category) VALUES
+            (11, 'Survey intro', '/x/cf-intro.wav', 'custom'), (90, 'Hold music', '/x/moh.mp3', 'moh')");
+        $pdo->exec('CREATE TABLE m_Extensions (id INTEGER PRIMARY KEY, number VARCHAR, type VARCHAR, callerid VARCHAR)');
+        $pdo->exec("INSERT INTO m_Extensions (number, type, callerid) VALUES
+            ('301', 'SIP', 'Anna'), ('3100', 'QUEUE', 'Sales queue'), ('302', 'SIP', '')");
+        $pdo->exec("CREATE TABLE m_PbxExtensionModules (id INTEGER PRIMARY KEY, uniqid VARCHAR, disabled VARCHAR(1) NOT NULL)");
+        $pdo->exec("INSERT INTO m_PbxExtensionModules (uniqid, disabled) VALUES ('ModuleCallFeedback', '0')");
+
+        return $file;
+    }
+
     public function moduleDatabase(): string
     {
         $file = $this->tempFile();

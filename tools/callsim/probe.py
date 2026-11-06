@@ -2,7 +2,7 @@
 """Survey probe: real calls through the test PBX, checked against the module's log and database.
 
 The module's dialplan writes a "CFPROBE event=... key=value" line to
-Asterisk's notice log at every survey decision. Each scenario here places a
+Asterisk's verbose log at every survey decision. Each scenario here places a
 real call with CallSim's phones and carrier, presses survey keys from the
 customer's side after the agent hangs up, then checks the CFPROBE lines the
 call produced and the rows the module's worker stored for it (session,
@@ -21,13 +21,16 @@ import sys
 import time
 from pathlib import Path
 
+import urllib.parse
+import urllib.request
+
 import callsim
-from callsim import (CALLER, DID_DIRECT, DID_MAIN, IVR, OUTBOUND_NUMBER, PBX_CONTAINER,
+from callsim import (CALLER, DID_DIRECT, DID_MAIN, IVR, OUTBOUND_NUMBER, PBX_CONTAINER, PBX_URL,
                      Line, Pbx, callsim_routes_in_hours, docker, pause)
 
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR = HERE / "probe-results"
-MESSAGES_LOG = "/storage/usbdisk1/mikopbx/log/asterisk/messages"
+MESSAGES_LOG = "/storage/usbdisk1/mikopbx/log/asterisk/verbose"
 MODULE_DB = "/storage/usbdisk1/mikopbx/custom_modules/ModuleCallFeedback/db/module.db"
 ATTRIBUTION_TIMEOUT = 75     # the worker attributes every 30 s, 15 s after a call ends
 LINE_RE = re.compile(r"CFPROBE event=(\S+)(.*)$")
@@ -47,6 +50,9 @@ def probe_events(since_bytes):
                  f"tail -c +{since_bytes + 1} {MESSAGES_LOG} | grep CFPROBE || true", capture=True)
     events = []
     for line in out.splitlines():
+        # The verbose log also traces each Verbose() call ("Executing [...] Verbose(...)"); keep the message only.
+        if "Executing [" in line:
+            continue
         found = LINE_RE.search(line)
         if not found:
             continue
@@ -92,9 +98,14 @@ def sessions_of(ids):
     return rows
 
 
-def skip_total(reason):
-    rows = db_rows(f"SELECT COALESCE(SUM(count), 0) AS n FROM m_SkipCounts WHERE reason = '{reason}'")
-    return int(rows[0]["n"]) if rows else 0
+SKIP_REASONS = ("too_short", "excluded", "capped", "sampled_out", "concurrency")
+
+
+def skip_totals():
+    rows = db_rows("SELECT reason, SUM(count) AS n FROM m_SkipCounts GROUP BY reason")
+    totals = {r: 0 for r in SKIP_REASONS}
+    totals.update({row["reason"]: int(row["n"]) for row in rows})
+    return totals
 
 
 def wait_for_sessions(ids, attributed, timeout):
@@ -107,6 +118,27 @@ def wait_for_sessions(ids, attributed, timeout):
             break
         time.sleep(3)
     return rows
+
+
+def page_post(action, data):
+    """A write action of the module's page, as the page sends it: AJAX POST with the admin's Bearer token."""
+    pbx = Pbx()
+    req = urllib.request.Request(f"{PBX_URL}/admin-cabinet/module-call-feedback/{action}",
+                                 data=urllib.parse.urlencode(data).encode(), method="POST",
+                                 headers={"Authorization": f"Bearer {pbx.token}", "X-Requested-With": "XMLHttpRequest",
+                                          "Accept": "application/json"})
+    with urllib.request.urlopen(req, context=pbx.tls, timeout=30) as r:
+        body = json.loads(r.read() or b"{}")
+    if not body.get("success"):
+        raise RuntimeError(f"{action}: {body.get('message')}")
+    return body.get("data")
+
+
+def active_survey_id():
+    rows = db_rows("SELECT id FROM m_Surveys WHERE status = 'active' ORDER BY id DESC LIMIT 1")
+    if not rows:
+        raise RuntimeError("No active survey; set one up on CallSim's routes first (see the README)")
+    return int(rows[0]["id"])
 
 
 # --------------------------------------------------------------------------- helpers
@@ -176,9 +208,10 @@ def scenario(description, expect):
     return wrap
 
 
-def surveyed(direction, answers, talk, agent, status="completed", queue=None):
+def surveyed(direction, answers, talk, agent, status="completed", queue=None, follow_up=False):
     """Expectation: survey offered in `direction`, `answers` ({"1": "4", ...}) stored with
-    `status`, dialplan talk time about `talk` s, and the CDR attributing it to `agent`."""
+    `status`, dialplan talk time about `talk` s, and the CDR attributing it to `agent`. With
+    `follow_up`, the headline answer is a detractor and opens a follow-up (otherwise none)."""
     def check(result):
         events, problems = result["events"], []
         offered = first(events, "offered")
@@ -208,6 +241,11 @@ def surveyed(direction, answers, talk, agent, status="completed", queue=None):
             problems.append("session not attributed from the CDR")
         elif row.get("cdr_talk_seconds") is None or abs(row["cdr_talk_seconds"] - talk) > 2:
             problems.append(f"CDR talk {row.get('cdr_talk_seconds')}, expected about {talk}")
+        cases = db_rows(f"SELECT status FROM m_FollowUps WHERE session_id = {int(row['id'])}")
+        if follow_up and [c["status"] for c in cases] != ["open"]:
+            problems.append(f"follow-ups {cases}, expected one open")
+        if not follow_up and cases:
+            problems.append(f"unexpected follow-up {cases}")
         return problems
     return check
 
@@ -219,13 +257,60 @@ def not_surveyed(result):
     return problems
 
 
-def skipped_too_short(result):
-    problems = ["survey was offered"] if first(result["events"], "offered") else []
-    if result["sessions"]:
-        problems.append("a session was stored")
-    if result["skips"] != 1:
-        problems.append(f"too-short count went up by {result['skips']}, expected 1")
-    return problems
+def skipped(reason, surveyed_first=False):
+    """Expectation: the (last) call is skipped for `reason` and counted; with `surveyed_first`,
+    an earlier call in the scenario was surveyed and stored."""
+    def check(result):
+        problems = []
+        offers = [e for e in result["events"] if e["event"] == "offered"]
+        if len(offers) != (1 if surveyed_first else 0):
+            problems.append(f"survey offered {len(offers)} times, expected {1 if surveyed_first else 0}")
+        if len(result["sessions"]) != (1 if surveyed_first else 0):
+            problems.append(f"{len(result['sessions'])} sessions stored")
+        changed = {r: n for r, n in result["skips"].items() if n}
+        if changed != {reason: 1}:
+            problems.append(f"skip counts changed by {changed}, expected {{{reason!r}: 1}}")
+        return problems
+    return check
+
+
+class survey_rules:
+    """Changes the active survey's rules through the page for the length of a scenario."""
+
+    def __init__(self, **rules):
+        self.rules = {k: str(v) for k, v in rules.items()}
+
+    def __enter__(self):
+        self.id = active_survey_id()
+        row = db_rows(f"SELECT {', '.join(self.rules)} FROM m_Surveys WHERE id = {self.id}")[0]
+        self.saved = {k: str(v) for k, v in row.items()}
+        page_post("saveSurvey", {"id": self.id, "fields": json.dumps(self.rules)})
+        pause(6)  # dialplan reload
+        return self
+
+    def __exit__(self, *exc):
+        page_post("saveSurvey", {"id": self.id, "fields": json.dumps(self.saved)})
+        docker("exec", PBX_CONTAINER, "asterisk", "-rx", "database deltree call-feedback-cap", capture=True)
+        pause(6)
+        return False
+
+
+class excluded_number:
+    """Adds a number to the exclusion list through the page for the length of a scenario."""
+
+    def __init__(self, number):
+        self.number = number
+
+    def __enter__(self):
+        page_post("addExclusions", {"numbers": self.number, "note": "CallSim probe"})
+        pause(6)
+        return self
+
+    def __exit__(self, *exc):
+        for row in db_rows(f"SELECT id FROM m_Exclusions WHERE number = '{self.number}'"):
+            page_post("removeExclusion", {"id": row["id"]})
+        pause(6)
+        return False
 
 
 @scenario("Inbound to the direct DID, 301 answers after 2 s, talks 6 s and hangs up; the caller "
@@ -255,7 +340,7 @@ def in_ivr_timeout_queue(lines):
 
 
 @scenario("Inbound to 301, answered; 301 hangs up after 1 s of talk, under the 4 s minimum. Not "
-          "surveyed; counted as too short.", skipped_too_short)
+          "surveyed; counted as too short.", skipped("too_short"))
 def in_too_short(lines):
     c, a = lines["carrier"], lines["301"]
     c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(1); a.hangup()
@@ -264,11 +349,34 @@ def in_too_short(lines):
 
 @scenario("Inbound to 301, answered, 6 s talk; after 301 hangs up the caller presses 2 for the first "
           "question and hangs up during the second. The first answer is kept.",
-          surveyed("in", {"1": "2"}, 6, "301", status="started"))
+          surveyed("in", {"1": "2"}, 6, "301", status="started", follow_up=True))
 def in_partial(lines):
     c, a = lines["carrier"], lines["301"]
     c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
     pause(1.5); c.keys("2"); pause(1.5); safe_hangup(c)
+
+
+@scenario("Inbound to 301 from a number on the exclusion list (added through the page), 6 s talk, "
+          "301 hangs up. Not surveyed; counted as excluded.", skipped("excluded"))
+def in_excluded(lines):
+    c, a = lines["carrier"], lines["301"]
+    with excluded_number(CALLER):
+        c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
+        pause(4); safe_hangup(c)
+
+
+@scenario("With a 1-day frequency cap (set through the page), the same number calls twice: the first "
+          "call is surveyed, the second is not and is counted as capped.", skipped("capped", surveyed_first=True))
+def in_capped(lines):
+    c, a = lines["carrier"], lines["301"]
+    with survey_rules(frequency_cap_days=1):
+        for keys in (True, False):
+            c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
+            if keys:
+                pause(1.5); c.keys("4"); pause(1.5); c.keys("9"); pause(4)
+            else:
+                pause(4)
+            safe_hangup(c); pause(3)
 
 
 @scenario("Inbound to 301, answered; the caller hangs up first. Nothing can be surveyed.",
@@ -311,12 +419,35 @@ def in_blind_transfer(lines):
 @scenario("Inbound to 301, answered; 301 attended-transfers (##) to 302, then hangs up to complete "
           "it; 302 talks 5 s and hangs up; the caller presses 2 and 7. Talk time counts from the "
           "first answer (301), about 15 s.",
-          surveyed("in", {"1": "2", "2": "7"}, 15, "301"))
+          surveyed("in", {"1": "2", "2": "7"}, 15, "301", follow_up=True))
 def in_attended_transfer(lines):
     c, a, b = lines["carrier"], lines["301"], lines["302"]
     c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(3)
     a.keys("##302"); b.ringing(); pause(2); b.answer(); pause(3); a.hangup(); pause(5); b.hangup()
     pause(1.5); c.keys("2"); pause(1.5); c.keys("7"); pause(4); safe_hangup(c)
+
+
+def tested(result):
+    problems = []
+    if not first(result["events"], "test_entry"):
+        problems.append("the test call did not reach the survey")
+    sessions = result["sessions"]
+    if len(sessions) != 1:
+        return problems + [f"{len(sessions)} stored sessions, expected 1"]
+    row = sessions[0]
+    if row.get("is_test") != 1 or row.get("caller_num") != "301":
+        problems.append(f"stored is_test={row.get('is_test')} caller_num={row.get('caller_num')}, expected 1 and 301")
+    if row["answers"] != {"1": "4", "2": "9"}:
+        problems.append(f"stored answers {row['answers']}, expected 1: 4, 2: 9")
+    return problems
+
+
+@scenario("Test call from the survey editor: the page rings 301, 301 answers and presses 4, then 9. "
+          "Stored as a test session, with answers, and never sent for CDR attribution.", tested)
+def editor_test_call(lines):
+    a = lines["301"]
+    page_post("testCall", {"id": active_survey_id(), "extension": "301"})
+    a.ringing(); pause(1); a.answer(); pause(1.5); a.keys("4"); pause(1.5); a.keys("9"); pause(4); safe_hangup(a)
 
 
 @scenario("Outbound 301 -> carrier, answered after 2 s, 6 s talk, 301 hangs up; the customer "
@@ -355,7 +486,7 @@ def run(names):
             print(f"{s['name']}: {s['description']}")
             lines = {n: Line(n) for n in [*callsim.PHONES, "carrier"]}
             since = log_size()
-            skips_before = skip_total("too_short")
+            skips_before = skip_totals()
             error = None
             try:
                 s["run"](lines)
@@ -368,7 +499,7 @@ def run(names):
             result = {
                 "events": events,
                 "sessions": wait_for_sessions(ids, expects_session, ATTRIBUTION_TIMEOUT if expects_session else 5),
-                "skips": skip_total("too_short") - skips_before,
+                "skips": {r: n - skips_before[r] for r, n in skip_totals().items()},
             }
             problems = ([f"scenario error: {error}"] if error else []) + s["expect"](result)
             for e in events:

@@ -51,8 +51,11 @@ final class FeedbackStore
      * answers that remain, so the stored status always matches the stored
      * answers. A second record for the same call and survey is ignored.
      *
+     * A test call from the survey editor is stored as a session too, marked
+     * is_test and left out of results; it needs no CDR attribution.
+     *
      * @param array<string, mixed> $record
-     * @param array{id: int, min_talk_seconds: int, questions: array<int, array{metric: string, min: int, max: int}>}|null $survey
+     * @param array<string, mixed>|null $survey The survey version (SurveyRepository::find()).
      *
      * @return string One of the RECORDED, DUPLICATE, SKIP_COUNTED, UNKNOWN_SURVEY constants.
      */
@@ -69,7 +72,7 @@ final class FeedbackStore
         $answers = [];
         foreach ($record['answers'] as $position => $answer) {
             $question = $survey['questions'][$position] ?? null;
-            if ($question !== null && $answer['value'] >= $question['min'] && $answer['value'] <= $question['max']) {
+            if ($question !== null && in_array($answer['value'], ScalePresets::values($question['scale']), true)) {
                 $answers[$position] = $answer;
             }
         }
@@ -77,9 +80,9 @@ final class FeedbackStore
         return $this->transaction(function () use ($record, $survey, $answers): string {
             $stmt = $this->db->prepare(
                 'INSERT INTO ' . self::SESSIONS . ' (linkedid, survey_id, direction, status, context_id, route_id, did,
-                    caller_num, answer_at, talk_seconds, offered_at, ended_at, excluded)
+                    caller_num, answer_at, talk_seconds, offered_at, ended_at, excluded, is_test, attributed_at)
                  VALUES (:linkedid, :survey, :direction, :status, :context, :route, :did,
-                    :caller, :answer_at, :talk, :offered_at, :ended_at, 0)
+                    :caller, :answer_at, :talk, :offered_at, :ended_at, 0, :is_test, :attributed_at)
                  ON CONFLICT (linkedid, survey_id) DO NOTHING'
             );
             $stmt->execute([
@@ -95,6 +98,8 @@ final class FeedbackStore
                 ':talk'       => $record['talk'],
                 ':offered_at' => $record['offered_at'],
                 ':ended_at'   => $record['ended_at'],
+                ':is_test'    => $record['is_test'] ? 1 : 0,
+                ':attributed_at' => $record['is_test'] ? $record['ended_at'] : null,
             ]);
             if ($stmt->rowCount() === 0) {
                 return self::DUPLICATE;
@@ -152,6 +157,16 @@ final class FeedbackStore
     {
         $stmt = $this->db->prepare('SELECT * FROM ' . self::SESSIONS . ' WHERE linkedid = ? AND survey_id = ?');
         $stmt->execute([$linkedId, $surveyId]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function sessionById(int $id): ?array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM ' . self::SESSIONS . ' WHERE id = ?');
+        $stmt->execute([$id]);
         $row = $stmt->fetch();
 
         return $row === false ? null : $row;
