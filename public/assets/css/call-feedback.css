@@ -190,6 +190,15 @@
 }
 .cf-page .cf-editor-actions .ui.button { margin: 0; }
 .cf-page .cf-editor-actions .cf-actions-hint { color: var(--cf-muted); font-size: .9em; }
+/* Prompt menus: a searchable dropdown with a Listen button beside it, and a play button on each prompt in the list. */
+.cf-page .cf-prompt-control { display: flex; align-items: stretch; gap: var(--cf-space-2); }
+.cf-page .cf-prompt-control > .ui.dropdown { flex: 1 1 auto; min-width: 0; }
+.cf-page .cf-prompt-control > .cf-listen.ui.button { margin: 0; flex: 0 0 auto; }
+.cf-page .cf-listen.cf-playing.ui.button { color: var(--cf-primary) !important; box-shadow: 0 0 0 1px var(--cf-primary) inset !important; }
+.cf-page .cf-prompt-control .menu > .item { display: flex !important; align-items: center; gap: var(--cf-space-2); }
+.cf-page .cf-item-play { margin-left: auto; padding: var(--cf-space-1) var(--cf-space-2); border-radius: 4px; color: var(--cf-muted); cursor: pointer; line-height: 1; }
+.cf-page .cf-item-play:hover, .cf-page .cf-item-play.cf-playing { color: var(--cf-primary); background: var(--cf-surface); }
+.cf-page .cf-item-play i.icon { margin: 0; }
 .cf-page .cf-question { border: 1px solid var(--cf-border); border-radius: 6px; padding: var(--cf-space-4); margin-bottom: var(--cf-space-3); }
 .cf-page .cf-question-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--cf-space-2); font-weight: 600; }
 .cf-page .cf-targets { columns: 2 22em; }

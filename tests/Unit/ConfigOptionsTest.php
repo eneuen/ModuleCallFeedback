@@ -42,7 +42,8 @@ final class ConfigOptionsTest extends TestCase
 
     public function testOnlyCustomSoundFilesAndPhoneExtensions(): void
     {
-        self::assertSame([['id' => 11, 'name' => 'Survey intro']], ConfigOptions::soundFiles($this->config));
+        self::assertSame([['id' => 11, 'name' => 'Survey intro', 'path' => '/x/cf-intro.wav']],
+            ConfigOptions::soundFiles($this->config), 'The path lets the editor play the file.');
         self::assertSame([['number' => '301', 'name' => 'Anna'], ['number' => '302', 'name' => '']], ConfigOptions::extensions($this->config));
     }
 

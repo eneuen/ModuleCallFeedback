@@ -84,15 +84,25 @@ final class BuiltInPrompts
     }
 
     /**
-     * The catalogue for the survey editor, in display order.
+     * The catalogue for the survey editor, in display order, with the file
+     * the editor can preview in each language. The core installs the prompts
+     * into its sounds folder and converts them; the browser-friendly .webm
+     * copy is preferred, else the shipped .wav.
      *
-     * @return list<array{id: int, key: string}>
+     * @param string|null $soundsDir The PBX's Asterisk sounds folder, or null for no previews.
+     *
+     * @return list<array{id: int, key: string, preview: array<string, string>}>
      */
-    public static function catalogue(): array
+    public static function catalogue(?string $soundsDir = null): array
     {
         $list = [];
         foreach (self::IDS as $key => $id) {
-            $list[] = ['id' => $id, 'key' => $key];
+            $preview = [];
+            foreach ($soundsDir === null ? [] : DialplanBuilder::LANGUAGES as $language) {
+                $base = rtrim($soundsDir, '/') . "/$language/" . self::NAME_PREFIX . $key;
+                $preview[$language] = is_file("$base.webm") ? "$base.webm" : "$base.wav";
+            }
+            $list[] = ['id' => $id, 'key' => $key, 'preview' => $preview];
         }
 
         return $list;

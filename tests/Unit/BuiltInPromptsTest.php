@@ -49,6 +49,22 @@ final class BuiltInPromptsTest extends TestCase
         }
     }
 
+    public function testPreviewsPreferTheConvertedWebmCopy(): void
+    {
+        $sounds = "$this->moduleDir/asterisk-sounds";
+        mkdir("$sounds/ru-ru", 0777, true);
+        touch("$sounds/ru-ru/modulecallfeedback-q-csat.webm");
+
+        $csat = array_values(array_filter(BuiltInPrompts::catalogue($sounds), fn (array $p): bool => $p['key'] === 'q-csat'))[0];
+        self::assertSame("$sounds/ru-ru/modulecallfeedback-q-csat.webm", $csat['preview']['ru-ru']);
+        self::assertSame("$sounds/en-en/modulecallfeedback-q-csat.wav", $csat['preview']['en-en'], 'Not converted yet: the shipped WAV.');
+        self::assertSame([], BuiltInPrompts::catalogue()[0]['preview']);
+
+        unlink("$sounds/ru-ru/modulecallfeedback-q-csat.webm");
+        rmdir("$sounds/ru-ru");
+        rmdir($sounds);
+    }
+
     public function testAvailableOnlyWhenTheRecordingShipsInThatLanguage(): void
     {
         $csat = BuiltInPrompts::id('q-csat');

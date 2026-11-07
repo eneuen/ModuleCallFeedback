@@ -58,10 +58,12 @@ final class ConfigOptions
      */
     public static function soundFiles(PDO $config): array
     {
-        $rows = $config->query("SELECT id, name FROM m_SoundFiles WHERE category = 'custom' ORDER BY name, id")
+        $rows = $config->query("SELECT id, name, path FROM m_SoundFiles WHERE category = 'custom' ORDER BY name, id")
             ->fetchAll(PDO::FETCH_ASSOC);
 
-        return array_map(fn (array $r): array => ['id' => (int)$r['id'], 'name' => (string)$r['name']], $rows);
+        // The stored path lets the editor play a file through the core's sound-files:playback endpoint,
+        // which serves only the PBX's sound folders and only to a signed-in admin.
+        return array_map(fn (array $r): array => ['id' => (int)$r['id'], 'name' => (string)$r['name'], 'path' => (string)$r['path']], $rows);
     }
 
     /**

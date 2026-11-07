@@ -12,6 +12,7 @@ use MikoPBX\AdminCabinet\Providers\AssetProvider;
 use MikoPBX\Common\Providers\JwtProvider;
 use MikoPBX\Core\System\SystemMessages;
 use MikoPBX\Core\System\BeanstalkClient;
+use MikoPBX\Core\System\Directories;
 use MikoPBX\Core\Workers\Libs\WorkerModelsEvents\Actions\ReloadDialplanAction;
 use MikoPBX\Core\Workers\WorkerModelsEvents;
 use MikoPBX\Modules\PbxExtensionUtils;
@@ -156,7 +157,7 @@ class ModuleCallFeedbackController extends BaseController
             return [
                 'routes'     => ConfigOptions::routes($config, new SurveyEditor($this->moduleDb(), $config)),
                 'soundFiles' => ConfigOptions::soundFiles($config),
-                'builtInPrompts' => BuiltInPrompts::catalogue(),
+                'builtInPrompts' => BuiltInPrompts::catalogue(Directories::getDir(Directories::AST_SOUNDS_DIR)),
                 'extensions' => ConfigOptions::extensions($config),
                 'scales'     => ScalePresets::all(),
                 'languages'  => DialplanBuilder::LANGUAGES,

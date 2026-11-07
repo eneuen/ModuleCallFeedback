@@ -13,7 +13,7 @@
  *   canvas, where markup has no effect.
  */
 
-/* global globalRootUrl, globalTranslate, echarts, $ */
+/* global globalRootUrl, globalTranslate, echarts, $, TokenManager */
 
 const BASE = `${globalRootUrl}module-call-feedback/`;
 const t = (key, fallback) => (globalTranslate && globalTranslate[key]) || fallback;
@@ -227,8 +227,130 @@ function select(id, options, value, attrs = {}) {
 }
 
 function field(labelText, control, hint, width) {
+  // A prompt control wraps its select with a play button; the label belongs to the select.
+  const target = control.classList.contains('cf-prompt-control') ? control.querySelector('select') : control;
   return el('div', { class: `${width ? `${width} wide ` : ''}field` },
-    el('label', { for: control.id, text: labelText }), control, hint ? el('div', { class: 'cf-note', text: hint }) : null);
+    el('label', { for: target.id, text: labelText }), control, hint ? el('div', { class: 'cf-note', text: hint }) : null);
+}
+
+/* ------------------------------------------------------------------ prompt previews */
+
+/**
+ * Plays prompts in the editor, one at a time. The file comes from the core's
+ * sound-files:playback endpoint with the admin's token, as the core's own
+ * Sound files page does: it serves only the PBX's sound folders, and only to
+ * a signed-in admin. The page's CSP allows blob: audio.
+ */
+const preview = { audio: null, url: null, button: null, request: 0 };
+
+function setPlaying(button, playing) {
+  const icon = button.querySelector('i');
+  if (icon) icon.className = `${playing ? 'stop' : 'play'} icon`;
+  const text = playing ? t('cf_StopPreview', 'Stop') : t('cf_Listen', 'Listen');
+  button.title = text;
+  button.setAttribute('aria-label', text);
+  button.classList.toggle('cf-playing', playing);
+}
+
+function stopPreview() {
+  preview.request += 1;
+  if (preview.audio) preview.audio.pause();
+  if (preview.url) URL.revokeObjectURL(preview.url);
+  if (preview.button) setPlaying(preview.button, false);
+  Object.assign(preview, { audio: null, url: null, button: null });
+}
+
+async function fetchAudio(path, retry = true) {
+  const headers = { 'X-Requested-With': 'XMLHttpRequest' };
+  const tokens = typeof TokenManager === 'undefined' ? null : TokenManager;
+  if (tokens && tokens.accessToken) headers.Authorization = `Bearer ${tokens.accessToken}`;
+  const response = await fetch(`${window.location.origin}/pbxcore/api/v3/sound-files:playback?view=${encodeURIComponent(path)}`, { headers });
+  // An expired token: refresh it the way the core does, and try once more.
+  if (response.status === 401 && retry && tokens && tokens.silentRefresh) {
+    await tokens.silentRefresh();
+    return fetchAudio(path, false);
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.blob();
+}
+
+/** Plays `path` and shows it on `button`; pressing the playing button again stops it. */
+function togglePreview(path, button) {
+  const again = preview.button === button;
+  stopPreview();
+  if (again) return;
+  if (!path) {
+    showError(t('cf_PreviewNothing', 'Choose a prompt to listen to it.'));
+    return;
+  }
+  clearError();
+  const request = preview.request;
+  preview.button = button;
+  setPlaying(button, true);
+  fetchAudio(path).then((blob) => {
+    if (request !== preview.request) return null;
+    preview.url = URL.createObjectURL(blob);
+    preview.audio = new Audio(preview.url);
+    preview.audio.addEventListener('ended', () => { if (request === preview.request) stopPreview(); });
+    return preview.audio.play();
+  }).catch(() => {
+    if (request !== preview.request) return;
+    stopPreview();
+    showError(t('cf_PreviewFailed', 'This prompt can\'t be played. Its file may be missing, or still being converted after the module was enabled.'));
+  });
+}
+
+/** The survey language the editor shows now, which built-in prompts play in. */
+const editorLanguage = () => ($id('cf-language') ? $id('cf-language').value : (state.editing ? state.editing.survey.language : 'en-en'));
+
+/** A prompt ID's file to play: a built-in prompt in the editor's language, or a PBX sound file. */
+function promptFile(id) {
+  const n = Number(id);
+  if (!id || Number.isNaN(n)) return null;
+  if (n < 0) {
+    const builtIn = state.options.builtInPrompts.find((p) => p.id === n);
+    return builtIn ? builtIn.preview[editorLanguage()] || null : null;
+  }
+  const file = state.options.soundFiles.find((f) => f.id === n);
+  return file && file.path ? file.path : null;
+}
+
+/** A prompt menu with a Listen button beside it. initPromptMenus() turns the select into a searchable menu. */
+function promptControl(id, withNone, value, disabled) {
+  const menu = select(id, soundOptions(withNone), value, { class: 'ui search dropdown cf-prompt-select', disabled });
+  const listen = el('button', { class: 'ui basic icon button cf-listen', type: 'button',
+    onclick: () => togglePreview(promptFile(menu.value), listen) }, el('i', { class: 'play icon' }));
+  setPlaying(listen, false);
+  return el('div', { class: 'cf-prompt-control' }, menu, listen);
+}
+
+/**
+ * Turns the editor's prompt selects into searchable Semantic dropdowns and
+ * adds a play button to every prompt in their lists, so a prompt can be heard
+ * before it is chosen. The select stays underneath, so its value and change
+ * events work as before.
+ */
+function initPromptMenus(root) {
+  root.querySelectorAll('select.cf-prompt-select:not(.cf-ready)').forEach((menu) => {
+    menu.classList.add('cf-ready');
+    $(menu).dropdown({ fullTextSearch: true, placeholder: false, match: 'text' });
+    const dropdown = menu.closest('.ui.dropdown');
+    if (!dropdown) return;
+    dropdown.querySelectorAll('.menu .item').forEach((item) => {
+      const value = item.dataset.value;
+      if (!value) return;
+      const play = el('span', { class: 'cf-item-play', role: 'button', tabindex: '-1' }, el('i', { class: 'play icon' }));
+      setPlaying(play, false);
+      // Listening must not choose the item or close the list.
+      ['mousedown', 'mouseup', 'touchstart'].forEach((type) => play.addEventListener(type, (e) => e.stopPropagation()));
+      play.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        togglePreview(promptFile(value), play);
+      });
+      item.append(play);
+    });
+  });
 }
 
 function numberInput(id, value, min, max, disabled) {
@@ -442,6 +564,7 @@ function showList() {
     return;
   }
   state.editing = null;
+  stopPreview();
   clearInterval(state.testPoll);
   $id('cf-editor').classList.add('cf-hidden');
   $id('cf-survey-list').classList.remove('cf-hidden');
@@ -506,7 +629,9 @@ function openEditor(id, force = false) {
     $id('cf-survey-list').classList.add('cf-hidden');
     const box = $id('cf-editor');
     box.classList.remove('cf-hidden');
+    stopPreview();
     box.replaceChildren(renderEditor(data));
+    initPromptMenus(box);
   });
 }
 
@@ -520,7 +645,7 @@ function questionBlock(q, index, draft) {
         onclick: () => editQuestions((qs) => qs.splice(index, 1)) }) : null),
     el('div', { class: 'fields' },
       field(t('cf_Scale', 'Scale'), select(id('scale'), scales, q.scale, { disabled: !draft }), null, 'six'),
-      field(t('cf_QuestionPrompt', 'Prompt'), select(id('prompt'), soundOptions(false), q.prompt_id, { disabled: !draft }), null, 'six'),
+      field(t('cf_QuestionPrompt', 'Prompt'), promptControl(id('prompt'), false, q.prompt_id, !draft), null, 'six'),
       field(t('cf_Timeout', 'Wait (Seconds)'), numberInput(id('timeout'), q.timeout_seconds, 2, 30, !draft), null, 'two'),
       field(t('cf_Retries', 'Retries'), numberInput(id('retries'), q.retries, 0, 5, !draft), null, 'two')),
     q.scale === 'nps11' ? el('div', { class: 'cf-note', text: t('cf_NpsHint', 'NPS takes 0–10. The prompt must say "press 1 then 0 for 10": a lone 1 counts after 2 seconds.') }) : null);
@@ -543,7 +668,9 @@ function readQuestions() {
 function editQuestions(change) {
   const questions = readQuestions();
   change(questions);
+  stopPreview();
   $id('cf-questions').replaceChildren(...questions.map((q, i) => questionBlock(q, i, true)));
+  initPromptMenus($id('cf-questions'));
   $id('cf-add-question').disabled = questions.length >= 3;
 }
 
@@ -593,7 +720,7 @@ function renderEditor(data) {
     el('h4', { class: 'ui dividing header', text: t('cf_SectionPrompts', 'Prompts') }),
     el('p', { class: 'cf-note', text: t('cf_PromptsHint', 'Use the built-in prompts, which play in the survey\'s language, or your own recordings from Sound files (upload them there first; Phrase Studio can generate them).') }),
     el('div', { class: 'three fields' }, PROMPT_FIELDS.map(([name, key, fallback, hintKey, hint]) =>
-      field(t(key, fallback), select(`cf-${name}`, soundOptions(name === 'invalid_prompt_id'), s[name], { disabled: !draft }), t(hintKey, hint)))),
+      field(t(key, fallback), promptControl(`cf-${name}`, name === 'invalid_prompt_id', s[name], !draft), t(hintKey, hint)))),
 
     el('h4', { class: 'ui dividing header', text: t('cf_SectionQuestions', 'Questions') }),
     el('div', { id: 'cf-questions' }, Object.keys(s.questions).sort().map((pos, i) => questionBlock(s.questions[pos], i, draft))),
@@ -1461,6 +1588,7 @@ function selectTab(tab) {
     return;
   }
   if (tab !== 'surveys') state.dirty = false;
+  stopPreview();
   state.tab = tab;
   document.querySelectorAll('#call-feedback [data-tab]').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
   $id('cf-toolbar').classList.toggle('cf-hidden', !RESULT_TABS.includes(tab) || state.versions.length === 0);
