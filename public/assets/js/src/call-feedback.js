@@ -32,6 +32,9 @@ const STATUSES = {
   archived: ['cf_StatusArchived', 'Archived', 'grey'],
 };
 const PROBLEMS = {
+  cf_CallBackNoNumber: 'This case has no number to call back.',
+  cf_CallBackTypeNumber: 'Type the caller\'s number exactly to call it back.',
+  cf_CallBackTooSoon: 'This case was called back a moment ago. Wait half a minute before trying again.',
   cf_ProblemNotDraft: 'Only a draft can be activated.',
   cf_ProblemNoQuestions: 'Add at least one question.',
   cf_ProblemMissingPrompt: 'Choose a sound file for the intro, the thank-you and every question.',
@@ -64,6 +67,7 @@ const METRICS = {
 const WEEKDAYS = [['cf_Mon', 'Mon'], ['cf_Tue', 'Tue'], ['cf_Wed', 'Wed'], ['cf_Thu', 'Thu'], ['cf_Fri', 'Fri'], ['cf_Sat', 'Sat'], ['cf_Sun', 'Sun']];
 const SKIP_REASONS = {
   too_short: ['cf_SkipTooShort', 'too short'],
+  outside_hours: ['cf_SkipOutsideHours', 'outside survey hours'],
   excluded: ['cf_SkipExcluded', 'excluded number'],
   capped: ['cf_SkipCapped', 'asked recently'],
   sampled_out: ['cf_SkipSampled', 'not sampled'],
@@ -316,6 +320,7 @@ function renderEditor(data) {
     el('h4', { class: 'ui dividing header', text: t('cf_SectionRules', 'Who gets surveyed') }),
     el('div', { class: 'three fields' }, RULE_FIELDS.map(([name, key, fallback, min, max]) =>
       field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, archived)))),
+    hoursFields(s, archived),
     el('p', { class: 'cf-note', text: t('cf_RulesHint', 'Only calls an agent answered are surveyed, and never at the agent\'s choice. Excluded numbers and the limit on surveys running at once are under Settings.') }),
 
     el('h4', { class: 'ui dividing header', text: t('cf_SectionTargets', 'Runs on') }),
@@ -416,11 +421,28 @@ function testCallPanel(data) {
     testCallList(data));
 }
 
+/** Days (bit mask, Monday 1 ... Sunday 64) and times the survey runs. */
+function hoursFields(s, disabled) {
+  const days = WEEKDAYS.map((d, i) => el('div', { class: 'ui checkbox cf-day' },
+    el('input', { type: 'checkbox', class: 'cf-hours-day', id: `cf-day-${i}`, 'data-bit': String(1 << i),
+      checked: (s.hours_days & (1 << i)) !== 0, disabled }),
+    el('label', { for: `cf-day-${i}`, text: label(d) })));
+  return el('div', { class: 'fields' },
+    el('div', { class: 'eight wide field' }, el('label', { text: t('cf_HoursDays', 'Survey on these days') }), el('div', { class: 'cf-days' }, days)),
+    field(t('cf_HoursStart', 'From (empty: all day)'), el('input', { type: 'time', id: 'cf-hours-start', value: s.hours_start || '', disabled }), null, 'four'),
+    field(t('cf_HoursEnd', 'Until'), el('input', { type: 'time', id: 'cf-hours-end', value: s.hours_end || '', disabled }),
+      t('cf_HoursHint', 'PBX time. An end before the start runs past midnight.'), 'four'));
+}
+
 /** Saves what this version allows: everything on a draft, rules and routes otherwise. */
 function saveEditor(result) {
   const s = state.editing.survey;
   const fields = {};
   RULE_FIELDS.forEach(([name]) => { fields[name] = $id(`cf-${name}`).value; });
+  fields.hours_days = String([...document.querySelectorAll('#cf-editor .cf-hours-day:checked')]
+    .reduce((mask, box) => mask + Number(box.dataset.bit), 0));
+  fields.hours_start = $id('cf-hours-start').value;
+  fields.hours_end = $id('cf-hours-end').value;
   if (s.status === 'draft') {
     fields.name = $id('cf-name').value;
     fields.language = $id('cf-language').value;
@@ -462,7 +484,8 @@ function loadSettings() {
     const s = data.settings;
     const form = el('form', { class: 'ui form', onsubmit: (e) => {
       e.preventDefault();
-      const settings = { alert_emails: $id('cf-alert-emails').value };
+      const settings = { alert_emails: $id('cf-alert-emails').value, callback_prefixes: $id('cf-callback-prefixes').value,
+        summary: $id('cf-summary').value };
       SETTING_FIELDS.forEach(([name]) => { settings[name] = $id(`cf-${name}`).value; });
       post('saveSettings', { settings: JSON.stringify(settings) })
         .then(() => message(result, 'positive', t('cf_Saved', 'Saved. Calls use the change within a few seconds.')),
@@ -472,6 +495,13 @@ function loadSettings() {
     data.mailEnabled ? null : el('div', { class: 'ui warning message', text: t('cf_MailOff', 'Email notifications are off in the PBX\'s mail settings, so no alerts are sent. Follow-ups are still listed.') }),
     field(t('cf_AlertEmails', 'Send alerts to'), el('textarea', { id: 'cf-alert-emails', rows: '2', text: s.alert_emails.join('\n') }),
       t('cf_AlertEmailsHint', 'One address per line, up to 10. Alerts carry a link to the follow-up, not the caller\'s number.')),
+    field(t('cf_Summary', 'Summary email to the same addresses'),
+      select('cf-summary', [['off', t('cf_SummaryOff', 'Off')], ['daily', t('cf_SummaryDaily', 'Daily, for the day before')],
+        ['weekly', t('cf_SummaryWeekly', 'Weekly on Monday, for the last 7 days')]], s.summary),
+      t('cf_SummaryHint', 'Sent after 08:00 PBX time: each active survey\'s score and responses, and the follow-ups still open.')),
+    field(t('cf_CallBackPrefixes', 'Numbers that can be called back in one click start with'),
+      el('input', { type: 'text', id: 'cf-callback-prefixes', value: s.callback_prefixes.join(' ') }),
+      t('cf_CallBackPrefixesHint', 'Digit prefixes of your own country\'s ordinary numbers, separated by spaces (for example 7495 8495). Any other number must be typed in before it is called back, so a faked international or premium-rate number can\'t be called by mistake. Empty: every call-back must be typed.')),
     el('div', { class: 'three fields' }, SETTING_FIELDS.slice(0, 3).map(([name, key, fallback, min, max]) =>
       field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, false)))),
     el('h4', { class: 'ui dividing header', text: t('cf_SectionLimits', 'Results and limits') }),
@@ -503,7 +533,24 @@ function loadSettings() {
               onclick: () => post('removeExclusion', { id: x.id }).then(() => loadSettings(),
                 (xhr) => message(exclusionsResult, 'negative', failText(xhr, t('cf_SaveFailed', 'The change could not be saved.')))) }))))))));
 
-    $id('cf-settings').replaceChildren(form, exclusions);
+    const forgetResult = el('div');
+    const privacy = el('div', {},
+      el('h4', { class: 'ui dividing header', text: t('cf_SectionPrivacy', 'Privacy') }),
+      el('p', { class: 'cf-note', text: t('cf_RetentionHint', 'Callers\' numbers are kept as long as the PBX keeps its call history, then removed; scores stay. The same limit applies to the "don\'t ask again" memory.') }),
+      el('form', { class: 'ui form', onsubmit: (e) => {
+        e.preventDefault();
+        const number = $id('cf-forget-number').value.trim();
+        if (!number || !window.confirm(t('cf_ConfirmForget', 'Delete every survey answer and follow-up for {number}? This can\'t be undone.').replace('{number}', number))) return;
+        post('forgetNumber', { number })
+          .then((r) => { $id('cf-forget-number').value = ''; message(forgetResult, 'positive', t('cf_Forgotten', 'Deleted {n} survey session(s) for that number.').replace('{n}', r.sessions)); },
+            (xhr) => message(forgetResult, 'negative', failText(xhr, t('cf_SaveFailed', 'The change could not be saved.'))));
+      } },
+      el('div', { class: 'fields' },
+        field(t('cf_ForgetNumber', 'Delete all data for a number'), el('input', { type: 'text', id: 'cf-forget-number', maxlength: '40' }), null, 'eight'),
+        el('div', { class: 'four wide field cf-form-buttons' }, el('button', { class: 'ui basic negative button', type: 'submit', text: t('cf_Delete', 'Delete') })))),
+      forgetResult);
+
+    $id('cf-settings').replaceChildren(form, exclusions, privacy);
   });
 }
 
@@ -536,9 +583,23 @@ function nameOf(kind, key) {
   if (key === '' || key === null || key === undefined) return t('cf_Unknown', 'Unknown');
   if (kind === 'weekday') return label(WEEKDAYS[Number(key) - 1] || [key, key]);
   if (kind === 'hour') return `${String(key).padStart(2, '0')}:00`;
+  if (kind === 'wait' || kind === 'talk') return bucketLabel(kind, Number(key));
   if (kind === 'direction') return key === 'in' ? t('cf_Inbound', 'Inbound') : t('cf_Outbound', 'Outbound');
   const names = kind === 'did' ? state.labels.dids : state.labels.extensions;
   return names && names[key] ? `${names[key]} (${key})` : String(key);
+}
+
+const BUCKETS = { wait: [0, 15, 30, 60, 120, 300], talk: [0, 60, 180, 300, 600] };
+
+/** "15–30 s", "1–2 min", "5 min or more" for a bucket's lower bound. */
+function bucketLabel(kind, from) {
+  const bounds = BUCKETS[kind];
+  const next = bounds[bounds.indexOf(from) + 1];
+  const span = (sec) => (sec < 60 ? `${sec} s` : `${sec / 60} min`);
+  if (next === undefined) return t('cf_OrMore', '{from} or more').replace('{from}', span(from));
+  // "15–30 s" and "1–2 min" when both ends share a unit, "30 s–1 min" when not.
+  const sameUnit = (from < 60) === (next < 60);
+  return sameUnit ? `${span(from).split(' ')[0]}–${span(next)}` : `${span(from)}–${span(next)}`;
 }
 
 function metricName(scale) {
@@ -687,6 +748,45 @@ function loadBreakdown() {
   });
 }
 
+const HEALTH_STEPS = { offered: ['cf_StepOffered', 'Offered the survey'], completed: ['cf_StepCompleted', 'Answered every question'] };
+
+function loadHealth() {
+  const table = $id('cf-health-table');
+  if (!state.versions.length) {
+    table.replaceChildren();
+    $id('cf-health-notes').replaceChildren(noVersions());
+    return;
+  }
+  get('health', resultsQuery()).then((h) => {
+    const top = Math.max(1, h.steps[0].count);
+    const head = el('thead', {}, el('tr', {},
+      el('th', { text: t('cf_Step', 'Step') }), el('th', { class: 'cf-num', text: t('cf_Callers', 'Callers') }),
+      el('th', { class: 'cf-num', text: t('cf_OfOffered', 'Of offered') }), el('th', { class: 'cf-num', text: t('cf_DroppedHere', 'Dropped here') }),
+      el('th', { class: 'cf-bar-cell' })));
+    const body = el('tbody', {}, h.steps.map((step) => {
+      const bar = el('div', { class: 'cf-bar' });
+      bar.style.width = `${Math.round((100 * step.count) / top)}%`;
+      const name = HEALTH_STEPS[step.step] ? label(HEALTH_STEPS[step.step])
+        : `${t('cf_AnsweredQuestion', 'Answered question')} ${step.step.slice(1)} (${scaleLabel(step.scale)})`;
+      return el('tr', {},
+        el('td', { text: name }),
+        el('td', { class: 'cf-num', text: step.count.toLocaleString() }),
+        el('td', { class: 'cf-num', text: fmt(step.share, '%') }),
+        el('td', { class: 'cf-num', text: step.drop === null ? '' : step.drop.toLocaleString() }),
+        el('td', { class: 'cf-bar-cell' }, bar));
+    }));
+    table.replaceChildren(head, body);
+    const skipped = Object.entries(h.skipped).map(([reason, n]) => el('tr', {},
+      el('td', { text: SKIP_REASONS[reason] ? label(SKIP_REASONS[reason]) : reason }), el('td', { class: 'cf-num', text: n.toLocaleString() })));
+    fill($id('cf-health-notes'),
+      el('h4', { class: 'ui header', text: t('cf_NotAskedHeader', 'Calls not asked, by rule') }),
+      el('table', { class: 'ui very basic compact table cf-table cf-narrow' }, el('tbody', {}, skipped,
+        el('tr', {}, el('td', { text: t('cf_LeftOutShort', 'asked, but left out: the call record shows less talk than the minimum') }),
+          el('td', { class: 'cf-num', text: h.excluded.toLocaleString() })))),
+      el('p', { class: 'cf-note', text: t('cf_HealthHint', 'A big drop at one question usually means its prompt is too long or unclear. Calls not asked are counted for all surveys together.') }));
+  });
+}
+
 function loadVersions() {
   return get('versions').then((data) => {
     state.versions = data.versions;
@@ -700,6 +800,7 @@ function loadVersions() {
 function refreshResults() {
   if (state.tab === 'overview') loadOverview();
   if (state.tab === 'breakdowns') loadBreakdown();
+  if (state.tab === 'health') loadHealth();
 }
 
 /* ------------------------------------------------------------------ follow-ups */
@@ -715,6 +816,35 @@ function hours(seconds) {
   if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} ${t('cf_Minutes', 'min')}`;
   if (seconds < 172800) return `${Math.round(seconds / 3600)} ${t('cf_Hours', 'h')}`;
   return `${Math.round(seconds / 86400)} ${t('cf_Days', 'days')}`;
+}
+
+/** The call-back controls of one case: one click for a listed prefix, otherwise the number typed in. */
+function callBackPanel(f, page) {
+  if (f.callback === 'none') return el('div', { class: 'cf-muted', text: t('cf_CallBackNoNumberShort', 'No number to call back') });
+  const result = el('div');
+  const extensions = state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
+  const ext = select(`cf-cb-ext-${f.id}`, extensions, extensions.length ? extensions[0][0] : '');
+  const typed = f.callback === 'typed'
+    ? el('input', { type: 'text', id: `cf-cb-typed-${f.id}`, maxlength: '40', placeholder: t('cf_TypeNumber', 'Type the number to call') })
+    : null;
+  const go = () => {
+    const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
+    const question = t('cf_ConfirmCallBack', 'Ring {ext}, then call {number} through the outgoing routes?')
+      .replace('{ext}', extLabel).replace('{number}', f.caller_num);
+    if (!window.confirm(question)) return;
+    post('callBack', { id: f.id, extension: ext.value, typed: typed ? typed.value : '' })
+      .then(() => { message(result, 'info', t('cf_CallBackRinging', 'Ringing {ext}. The call goes out when it answers.').replace('{ext}', extLabel)); },
+        (xhr) => message(result, 'negative', failText(xhr, t('cf_CallBackFailed', 'The call-back could not be placed.'))));
+  };
+  return el('div', { class: 'cf-callback' },
+    el('div', { class: 'ui form' }, el('div', { class: 'fields' },
+      el('div', { class: 'seven wide field' }, ext),
+      typed ? el('div', { class: 'six wide field' }, typed) : null,
+      el('div', { class: 'three wide field' }, el('button', { class: 'ui small button', type: 'button', disabled: extensions.length === 0,
+        onclick: go }, el('i', { class: 'phone icon' }), t('cf_CallBack', 'Call back'))))),
+    f.callback === 'typed' ? el('div', { class: 'cf-note', text: t('cf_CallBackTypeHint', 'This number isn\'t on the list of safe prefixes (Settings), so type it in to confirm. Callers can fake their number to make the PBX call an expensive line.') }) : null,
+    f.callbacks.length ? el('div', { class: 'cf-muted', text: f.callbacks.map((c) => `${t('cf_CalledBack', 'Called back')} ${dateTime(c.requested_at)} (${c.extension}${c.requested_by ? `, ${c.requested_by}` : ''})`).join(' · ') }) : null,
+    result);
 }
 
 function loadFollowUps(page = 1) {
@@ -739,7 +869,8 @@ function loadFollowUps(page = 1) {
         el('td', {}, el('div', { text: answers || '—' })),
         el('td', {}, el('div', { text: f.caller_num || t('cf_Withheld', 'withheld') }),
           el('div', { class: 'cf-muted', text: [f.agent ? `${t('cf_B_agent', 'Agent')}: ${nameOf('agent', f.agent)}` : '', f.queue ? `${t('cf_B_queue', 'Queue')}: ${nameOf('queue', f.queue)}` : '']
-            .filter(Boolean).join(' · ') })),
+            .filter(Boolean).join(' · ') }),
+          callBackPanel(f, page)),
         el('td', { class: 'cf-followup-edit' }, el('div', { class: 'ui form' }, statusSelect, note,
           el('button', { class: 'ui small button', type: 'button', text: t('cf_Save', 'Save'), onclick: () => {
             post('saveFollowUp', { id: f.id, status: statusSelect.value, note: note.value })
@@ -768,9 +899,9 @@ function loadFollowUps(page = 1) {
 function selectTab(tab) {
   state.tab = tab;
   document.querySelectorAll('#call-feedback [data-tab]').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
-  $id('cf-toolbar').classList.toggle('cf-hidden', !['overview', 'breakdowns'].includes(tab));
+  $id('cf-toolbar').classList.toggle('cf-hidden', !['overview', 'breakdowns', 'health'].includes(tab));
   clearError();
-  if (tab === 'overview' || tab === 'breakdowns') {
+  if (['overview', 'breakdowns', 'health'].includes(tab)) {
     loadVersions().then(() => { refreshResults(); Object.values(state.charts).forEach((c) => c.resize()); });
   }
   if (tab === 'surveys') {
@@ -799,7 +930,7 @@ function init() {
   }).then(() => {
     // The alert email links to ?tab=followups.
     const asked = new URLSearchParams(window.location.search).get('tab');
-    const tabs = ['overview', 'breakdowns', 'followups', 'surveys', 'settings'];
+    const tabs = ['overview', 'breakdowns', 'health', 'followups', 'surveys', 'settings'];
     selectTab(tabs.includes(asked) ? asked : (state.versions.length ? 'overview' : 'surveys'));
   });
 }

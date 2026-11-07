@@ -24,7 +24,7 @@ final class Handoff
     public const array STATUSES = ['offered', 'started', 'completed', 'skipped'];
 
     /** Why an eligible call was not asked. Rule skips only; unanswered calls are not recorded. */
-    public const array SKIP_REASONS = ['too_short', 'excluded', 'capped', 'sampled_out', 'concurrency'];
+    public const array SKIP_REASONS = ['too_short', 'outside_hours', 'excluded', 'capped', 'sampled_out', 'concurrency'];
 
     public const array DIRECTIONS = ['in', 'out'];
 

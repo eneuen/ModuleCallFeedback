@@ -44,3 +44,7 @@
 .cf-page .cf-trademark { color: #9aa5b1; font-size: .8em; margin-top: 2em; }
 .cf-page .cf-followup-edit { width: 30%; }
 .cf-page .cf-followup-edit textarea { margin: .4em 0; }
+.cf-page .cf-days { display: flex; flex-wrap: wrap; gap: .5em 1.1em; padding-top: .5em; }
+.cf-page .cf-narrow { max-width: 40em; }
+.cf-page .cf-callback { margin-top: .6em; }
+.cf-page .cf-callback .fields { margin-bottom: .2em !important; }

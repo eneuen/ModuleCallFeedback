@@ -180,7 +180,7 @@ final class SurveyRepository
         }
         $marks = implode(',', array_fill(0, count($ids), '?'));
         $stmt = $config->prepare("SELECT id, provider, number FROM m_IncomingRoutingTable WHERE id IN ($marks)");
-        $stmt->execute(array_values($ids));
+        $stmt->execute($ids);
         $routes = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $routes[(int)$row['id']] = ['provider' => (string)$row['provider'], 'number' => (string)$row['number']];
@@ -213,11 +213,14 @@ final class SurveyRepository
             ];
         }
         foreach ($surveys as &$survey) {
-            foreach (['id', 'family_id', 'version', 'min_talk_seconds', 'sample_percent', 'frequency_cap_days', 'created_at'] as $field) {
+            foreach (['id', 'family_id', 'version', 'min_talk_seconds', 'sample_percent', 'frequency_cap_days', 'created_at', 'hours_days'] as $field) {
                 $survey[$field] = (int)$survey[$field];
             }
             foreach (['intro_prompt_id', 'invalid_prompt_id', 'thanks_prompt_id', 'activated_at', 'archived_at'] as $field) {
                 $survey[$field] = $survey[$field] === null ? null : (int)$survey[$field];
+            }
+            foreach (['hours_start', 'hours_end'] as $field) {
+                $survey[$field] = (string)($survey[$field] ?? '');
             }
             $survey['questions'] = $questions[$survey['id']] ?? [];
         }

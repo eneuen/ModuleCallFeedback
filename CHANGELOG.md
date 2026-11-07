@@ -4,38 +4,23 @@ All notable changes to this module are listed here. Versions follow [Semantic Ve
 
 ## [Unreleased]
 
+The first version of Call Feedback: a post-call keypad survey for MikoPBX 2026.6.34 or later.
+
 Added:
 
-- **Configurable surveys.** The built-in test survey is replaced by surveys set up on the module's page (Modules → Call Feedback, administrators only).
-  - Each survey has versions (draft, active, archived) and 1–3 questions on fixed scales: CSAT 1–5, NPS 0–10, CES 1–5 (asked as "how easy was it") and yes/no. Question 1 is the headline score. Prompts are chosen from the PBX's sound files, by ID; timeouts, retries and an invalid-key prompt are set per survey.
-  - An active version's questions and prompts are fixed so results stay comparable; editing them means a new version. Its rules and routes can still change.
-  - Rules: minimum talk time, the share of calls to survey, a frequency cap per number (astdb), a list of excluded numbers and a limit on surveys running at once (GROUP_COUNT). Skipped calls are counted per day, route and reason.
-  - Targeting by incoming and outgoing route, matched when the agent hangs up (provider and DID, most specific first). One active survey per route. With no active survey the module adds no dialplan at all.
-  - Activation checks that every prompt plays, a test call was made on the version, the routes are free, the PBX's default incoming action doesn't play a sound file (which removes the after-dial hook from every route), and no other post-call survey module is enabled.
-- **Test call.** The survey editor rings an extension and plays the version without the rules; the session is kept apart from results. The page asks the module's worker to place the call over its Beanstalk queue, because the web process has no AMI connection.
-- **Results.** Overview (headline score with its change against the previous period, average, response and completion rates, resolution rate, score over time, answer distribution, calls not asked and why) and Breakdowns (by agent, queue, line, direction, hour, weekday). Scores are per version, need a minimum number of responses (default 20) before they are shown, and leave out test calls and calls the CDR shows were too short. Charts use a tree-shaken Apache ECharts 6.1.0.
-- **Follow-ups and alerts.** A headline score at or below the detractor threshold (CSAT ≤ 2, NPS ≤ 6, CES ≤ 2 by default) opens a follow-up once the call is confirmed in the CDR, and emails the chosen recipients through the PBX's mail settings. The email names the survey, score and agent and points to the page; it never carries the caller's number. The Follow-ups tab lists cases with a status, a note and the time to resolve.
-- **Settings:** alert recipients, detractor thresholds, minimum sample, the concurrent-survey limit and the exclusion list.
+- **Surveys set up on the module page** (Modules → Call Feedback, administrators only).
+  - Versions in a family (draft, active, archived). An active version's questions and prompts are fixed so results stay comparable; changing the wording means a new version. Rules and routes can still change on a live version.
+  - 1–3 questions on fixed scales: CSAT 1–5, NPS 0–10 ("1 then 0" for 10), CES 1–5 (asked as "how easy was it", so higher is better everywhere) and yes/no. Question 1 is the headline score. Prompts are chosen from the PBX's sound files; timeouts, retries and an invalid-key prompt per survey. Prompt language English or Russian.
+  - Rules: minimum talk time, days and hours, the share of calls to survey, a frequency cap per number, an exclusion list and a limit on surveys running at once. A survey ends within 3 minutes whatever is pressed. Calls a rule skips are counted per day, route and reason.
+  - Runs on chosen incoming and outgoing routes, one active survey per route. With no active survey the module adds no dialplan to any call.
+  - A test call rings an extension and plays the version; one is needed before activation. Activation also checks that every prompt plays, the routes are free, the PBX's default incoming action doesn't play a sound file (which would remove the survey hook from every route), and no other post-call survey module is enabled.
+- **How calls reach the survey.** Inbound, the caller's channel continues after the agent hangs up and the survey runs from the route's after-dial hook (with `Gosub`, so custom after-dial dialplan still runs). Outbound, `F(...)` moves the customer into the survey when the agent hangs up. Only calls an agent answered are surveyed, with talk time measured from the agent's answer, so calls that only reached an IVR, voicemail or a hangup action are skipped and time on hold doesn't count. Blind-transferred calls and callers who hang up first are not surveyed.
+- **Results stored safely.** A hangup handler runs one AGI script after the customer has gone; it validates every value against a fixed pattern and queues the record for the module's worker, which validates it again, keeps only answers on the question's scale, and stores the session, so partial answers count. Once the call is in the CDR, the worker fills in the agent, queue, wait and talk time from its legs; sessions under the minimum talk time are kept but left out of scores, and sessions whose call never appears in the CDR are discarded.
+- **Results pages.** Overview (score and change against the previous period, average, response and completion rates, resolution rate, score over time, answer distribution); Breakdowns by agent, queue, line, direction, hour, weekday, time to answer and talk time; Survey health (offered, each question, completed, drop-off, calls not asked by rule). Scores are per version and appear only with enough responses (default 20). Charts use a tree-shaken Apache ECharts 6.1.0.
+- **Follow-ups.** A headline score at or below the detractor threshold (CSAT ≤ 2, NPS ≤ 6, CES ≤ 2 by default) opens a case once the call is confirmed in the CDR, and emails the chosen recipients. Cases have a status, a note and who resolved them.
+- **Call-back from a follow-up**, with safeguards against toll fraud: it rings a chosen extension and then calls the customer through the outgoing routes; one click only for numbers starting with a prefix listed in Settings (none by default, never + or 00), any other number typed in to match; every call-back logged; the call-back itself is not surveyed.
+- **Emails:** detractor alerts and an optional daily or weekly summary, as plain text in the PBX's language, through the PBX's mail settings. They never carry the caller's number.
+- **Privacy:** callers' numbers follow the PBX's call-history retention and are then removed, keeping scores; frequency-cap keys never outlive it; "delete all data for a number"; uninstalling removes the AGI link and astdb keys the core leaves behind. No audio is recorded.
+- **Security:** admin-only pages with the role checked in the module; writes need an AJAX POST with the admin's token; nothing typed by an admin or sent by a caller reaches the dialplan; no new AMI users, ports or outbound connections; survey contexts can't be dialled from a phone or trunk.
 - **Interface in English and Russian.**
-- **Tests:** 206 unit tests (no PBX needed) and 17 CallSim scenarios, including the test call, an excluded number and the frequency cap set through the page, and follow-ups. All pass on MikoPBX 2026.6.34.
-
-Changed:
-
-- The dialplan's probe lines moved from Asterisk's notice log to its verbose log, so a production log isn't filled with them.
-- Admin-only access, CSRF protection for writes and the page's JSON conventions follow the Call Insights module.
-
-Earlier in this release:
-
-- **Stored results.** Each surveyed call is now recorded in the module's database: a session (direction, route, DID, caller number, measured talk time, status) with its answers, so a caller who hangs up after the first question still counts. Calls under the minimum talk time (4 s for the built-in test survey) are not asked and are counted per day, route and reason instead.
-  - The survey's hangup handler runs one AGI script, `call_feedback_end.php`, after the customer has gone. It validates every channel variable against a fixed pattern and publishes the record to the module's Beanstalk queue; caller-controlled text such as `123;Hangup()` is rejected.
-  - A new worker (`WorkerCallFeedback`) validates each record again, keeps only answers inside the question's range, works out the status from the answers kept, and ignores a second record for the same call.
-  - Every 30 seconds the worker attributes finished sessions from the CDR: agent, queue and the call's real talk time, using `CallIndexer` from the Call Insights module. Sessions under the minimum talk time are marked excluded; sessions whose call never appears in the CDR within 10 minutes are discarded.
-  - Uninstalling removes the AGI link and the module's astdb keys, which the core leaves behind.
-- **Unit tests** (PHPUnit, no PBX needed): the record validation, the store, attribution against CDR legs recorded from real calls, and the dialplan's safety rules. `CallIndexer`'s own tests and recorded fixtures come with it from Call Insights.
-- **CallSim probe:** every scenario now also checks the stored session, answers, attribution and skip counts; two new scenarios cover a call that is too short and a caller who hangs up mid-survey. All 14 pass on MikoPBX 2026.6.34. The hand-off costs about 17 ms per call on the test PBX; 50 at once completed in 0.23 s with none lost.
-
-- **Call-path probe build.** The module's first code: dialplan hooks that play a two-question test survey after every answered inbound and outbound call and log each decision, to prove the call path before settings and storage are built.
-  - Inbound: the after-dial hook enters the survey with `Gosub` and returns, so custom after-dial dialplan keeps running. Outbound: `F(...)` is appended to the route's dial options.
-  - Agent answer and talk time: a hangup handler on each agent leg in `[internal-users]` marks when an agent answered (inbound); a handler on the agent's channel hands its talk time to the survey through astdb when the agent hangs up first (outbound). Calls with no agent answer, such as an IVR option that hangs up, are skipped.
-  - Keys: one key for CSAT; 0–10 for NPS, with "1 then 0" for 10 and a 2-second digit timeout for a lone 1.
-- **CallSim** (from the Call Insights module): softphones and a fake carrier for real test calls, plus `probe.py`, twelve survey scenarios checked against the probe log. All pass on MikoPBX 2026.6.34.
+- **Development:** 233 unit tests that need no PBX; CallSim, a real-call test harness with 19 survey scenarios run against MikoPBX 2026.6.34; PHPStan against the core release the module targets; a check for banned functions; reproducible packaging and a draft-release workflow.

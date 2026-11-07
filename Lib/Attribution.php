@@ -81,7 +81,8 @@ final class Attribution
                 $call['first_queue'] === null ? null : (string)$call['first_queue'],
                 $talk,
                 $excluded,
-                $now
+                $now,
+                $call['wait_seconds'] === null ? null : (int)$call['wait_seconds'],
             );
             $result['attributed']++;
             if (!$excluded) {

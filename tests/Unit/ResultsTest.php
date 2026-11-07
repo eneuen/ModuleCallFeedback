@@ -113,6 +113,38 @@ final class ResultsTest extends TestCase
         self::assertSame(['10', '15'], array_column($hours['rows'], 'key'));
     }
 
+    public function testHealthShowsHowFarCallersGot(): void
+    {
+        $this->session('2026-11-03 10:00', [1 => 10, 2 => 1]);
+        $this->session('2026-11-03 11:00', [1 => 9, 2 => 0]);
+        $this->session('2026-11-04 12:00', [1 => 3]);
+        $this->session('2026-11-05 09:00', [], ['status' => 'offered']);
+
+        $h = $this->results()->health($this->query());
+
+        self::assertSame(['offered', 'q1', 'q2', 'completed'], array_column($h['steps'], 'step'));
+        self::assertSame([4, 3, 2, 2], array_column($h['steps'], 'count'));
+        self::assertSame([null, 1, 1, 0], array_column($h['steps'], 'drop'));
+        self::assertSame(75.0, $h['steps'][1]['share']);
+        self::assertSame(ScalePresets::YES_NO, $h['steps'][2]['scale']);
+    }
+
+    public function testBreakdownByWaitAndTalkTime(): void
+    {
+        $this->session('2026-11-03 10:00', [1 => 10]);
+        $this->session('2026-11-03 11:00', [1 => 0]);
+        $this->session('2026-11-04 12:00', [1 => 9]);
+        $this->module->exec("UPDATE m_SurveySessions SET wait_seconds = 10, cdr_talk_seconds = 400 WHERE linkedid = 'call-1'");
+        $this->module->exec("UPDATE m_SurveySessions SET wait_seconds = 200, cdr_talk_seconds = 50 WHERE linkedid = 'call-2'");
+
+        $wait = $this->results()->breakdown($this->query(['breakdown' => 'wait']));
+        self::assertSame(['0', '120', ''], array_column($wait['rows'], 'key'), 'By bucket, unknown last.');
+        self::assertSame([100.0, -100.0], [$wait['rows'][0]['score'], $wait['rows'][1]['score']]);
+
+        $talk = $this->results()->breakdown($this->query(['breakdown' => 'talk']));
+        self::assertSame(['0', '300', ''], array_column($talk['rows'], 'key'));
+    }
+
     public function testSkippedCallsAreCountedByReason(): void
     {
         $skip = FeedbackStoreTest::record(['status' => 'skipped', 'reason' => 'capped', 'answers' => [],

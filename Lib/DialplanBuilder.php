@@ -37,6 +37,9 @@ final class DialplanBuilder
     public const CTX_AGENT_IN_END  = 'call-feedback-agent-in-end';
     public const CTX_AGENT_OUT_END = 'call-feedback-agent-out-end';
 
+    /** Set (inherited) on calls the module places itself, such as call-backs, so they are never surveyed. */
+    public const SKIP_VARIABLE = 'CF_SKIP';
+
     /** astdb family for the outbound talk-time hand-over (see outboundBeforeDial). */
     public const DB_TALK = 'call-feedback-talk';
 
@@ -50,6 +53,9 @@ final class DialplanBuilder
     public const AGI_SCRIPT = 'call_feedback_end.php';
 
     public const array LANGUAGES = ['en-en', 'ru-ru'];
+
+    /** A survey call is hung up after this long, whatever happens in it. */
+    public const int MAX_SURVEY_SECONDS = 180;
 
     /** Seconds Asterisk waits for a second key when a scale has two-digit answers (NPS "10"). */
     private const int DIGIT_TIMEOUT = 2;
@@ -204,7 +210,7 @@ final class DialplanBuilder
             return '';
         }
 
-        return 'same => n,Set(DOPTIONS=${DOPTIONS}F(' . self::CTX_OUT_ENTRY . '^s^1))' . "\n\t"
+        return 'same => n,ExecIf($["${' . self::SKIP_VARIABLE . '}" != "1"]?Set(DOPTIONS=${DOPTIONS}F(' . self::CTX_OUT_ENTRY . '^s^1)))' . "\n\t"
             . 'same => n,Set(__CF_OUT_SURVEY=' . $surveyId . ')' . "\n\t"
             . 'same => n,Set(__CF_OUT_ROUTE=' . $routeId . ')' . "\n\t"
             . 'same => n,Set(__CF_CUSTOMER=${FILTER(0-9+,${number})})' . "\n\t"
@@ -435,6 +441,7 @@ DIALPLAN;
             // A test call from the survey editor skips the rules.
             'GotoIf($["${CF_TEST}" == "1"]?ask)',
             "GotoIf(\$[0\${CF_TALK} < $minTalk]?too_short)",
+            ...self::hoursCheck($survey),
             "GotoIf(\$[\"\${CF_NUM}x\" != \"x\" & \${DIALPLAN_EXISTS($excluded,\${CF_NUM},1)}]?excluded)",
         ];
         if ($capSeconds > 0) {
@@ -447,6 +454,8 @@ DIALPLAN;
         $lines[] = "Set(GROUP($group)=surveys)";
         $lines[] = "GotoIf(\$[\${GROUP_COUNT(surveys@$group)} > $max]?concurrency)";
         $lines[] = ['ask', 'Set(CF_STATUS=offered)'];
+        // However keys are pressed (or not), the survey ends within this time.
+        $lines[] = 'Set(TIMEOUT(absolute)=' . self::MAX_SURVEY_SECONDS . ')';
         $lines[] = 'Set(CF_OFFERED=${EPOCH})';
         if ($capSeconds > 0) {
             $lines[] = "ExecIf(\$[\"\${CF_NUM}x\" != \"x\" & \"\${CF_TEST}\" != \"1\"]?Set(DB($dbCap/\${CF_NUM})=\${EPOCH}))";
@@ -471,7 +480,7 @@ DIALPLAN;
         }
         $lines[] = ['done', $survey['paths']['thanks'] !== null ? 'Playback(' . $survey['paths']['thanks'] . ')' : 'NoOp()'];
         $lines[] = 'Return()';
-        foreach (['too_short', 'excluded', 'capped', 'sampled_out', 'concurrency'] as $reason) {
+        foreach (Handoff::SKIP_REASONS as $reason) {
             $lines[] = [$reason, 'Set(CF_STATUS=skipped)'];
             $lines[] = "Set(CF_REASON=$reason)";
             $lines[] = "Verbose(3,CFPROBE event=skip reason=$reason cf_talk=\${CF_TALK} $c)";
@@ -484,6 +493,35 @@ DIALPLAN;
         }
 
         return $conf;
+    }
+
+    private const array WEEKDAYS = [1 => 'mon', 2 => 'tue', 4 => 'wed', 8 => 'thu', 16 => 'fri', 32 => 'sat', 64 => 'sun'];
+
+    /**
+     * The hours rule as GotoIfTime lines: within the days and times the call
+     * goes on, otherwise it is skipped as outside_hours. Nothing when the
+     * survey runs at all times. PBX time zone; an end before the start runs
+     * past midnight.
+     *
+     * @param array<string, mixed> $survey
+     *
+     * @return list<string|array{string, string}>
+     */
+    private static function hoursCheck(array $survey): array
+    {
+        $mask = (int)($survey['hours_days'] ?? 127) & 127;
+        $start = (string)($survey['hours_start'] ?? '');
+        $end = (string)($survey['hours_end'] ?? '');
+        $timePattern = '/^([01][0-9]|2[0-3]):[0-5][0-9]$/';
+        $hasTimes = preg_match($timePattern, $start) === 1 && preg_match($timePattern, $end) === 1 && $start !== $end;
+        if (($mask === 127 || $mask === 0) && !$hasTimes) {
+            return [];
+        }
+        $days = $mask === 127 || $mask === 0 ? '*' : implode('&', array_values(array_filter(self::WEEKDAYS,
+            fn (int $bit): bool => ($mask & $bit) !== 0, ARRAY_FILTER_USE_KEY)));
+        $times = $hasTimes ? "$start-$end" : '*';
+
+        return ["GotoIfTime($times,$days,*,*?in_hours)", 'Goto(outside_hours)', ['in_hours', 'NoOp()']];
     }
 
     /**

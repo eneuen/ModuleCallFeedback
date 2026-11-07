@@ -28,6 +28,7 @@
     <div class="ui top attached tabular menu" id="cf-tabs">
         <a class="item" data-tab="overview">{{ t._('cf_TabOverview')|e }}</a>
         <a class="item" data-tab="breakdowns">{{ t._('cf_TabBreakdowns')|e }}</a>
+        <a class="item" data-tab="health">{{ t._('cf_TabHealth')|e }}</a>
         <a class="item" data-tab="followups">{{ t._('cf_TabFollowUps')|e }}</a>
         <a class="item" data-tab="surveys">{{ t._('cf_TabSurveys')|e }}</a>
         <div class="right menu">
@@ -55,11 +56,18 @@
                     <option value="direction">{{ t._('cf_B_direction')|e }}</option>
                     <option value="hour">{{ t._('cf_B_hour')|e }}</option>
                     <option value="weekday">{{ t._('cf_B_weekday')|e }}</option>
+                    <option value="wait">{{ t._('cf_B_wait')|e }}</option>
+                    <option value="talk">{{ t._('cf_B_talk')|e }}</option>
                 </select>
             </div>
         </div>
         <table class="ui very basic table cf-table" id="cf-breakdown-table"></table>
         <div id="cf-breakdown-notes"></div>
+    </div>
+
+    <div class="ui bottom attached tab segment" data-tab="health">
+        <table class="ui very basic table cf-table" id="cf-health-table"></table>
+        <div id="cf-health-notes"></div>
     </div>
 
     <div class="ui bottom attached tab segment" data-tab="followups">

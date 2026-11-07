@@ -134,13 +134,14 @@ final class FeedbackStore
         return $stmt->fetchAll();
     }
 
-    public function attribute(int $sessionId, ?string $agent, ?string $queue, ?int $cdrTalkSeconds, bool $excluded, int $now): void
+    public function attribute(int $sessionId, ?string $agent, ?string $queue, ?int $cdrTalkSeconds, bool $excluded, int $now,
+        ?int $waitSeconds = null): void
     {
         $stmt = $this->db->prepare(
-            'UPDATE ' . self::SESSIONS . ' SET agent = ?, queue = ?, cdr_talk_seconds = ?, excluded = ?, attributed_at = ?
-             WHERE id = ?'
+            'UPDATE ' . self::SESSIONS . ' SET agent = ?, queue = ?, cdr_talk_seconds = ?, wait_seconds = ?, excluded = ?,
+             attributed_at = ? WHERE id = ?'
         );
-        $stmt->execute([$agent, $queue, $cdrTalkSeconds, $excluded ? 1 : 0, $now, $sessionId]);
+        $stmt->execute([$agent, $queue, $cdrTalkSeconds, $waitSeconds, $excluded ? 1 : 0, $now, $sessionId]);
     }
 
     /** Removes a session and its answers (a call that never appeared in the CDR). */

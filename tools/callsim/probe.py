@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 import callsim
-from callsim import (CALLER, DID_DIRECT, DID_MAIN, IVR, OUTBOUND_NUMBER, PBX_CONTAINER, PBX_URL,
+from callsim import (CALLER, DID_DIRECT, DID_MAIN, IVR, OUTBOUND_NUMBER, OUTBOUND_PREFIX, PBX_CONTAINER, PBX_URL,
                      Line, Pbx, callsim_routes_in_hours, docker, pause)
 
 HERE = Path(__file__).resolve().parent
@@ -98,7 +98,7 @@ def sessions_of(ids):
     return rows
 
 
-SKIP_REASONS = ("too_short", "excluded", "capped", "sampled_out", "concurrency")
+SKIP_REASONS = ("too_short", "outside_hours", "excluded", "capped", "sampled_out", "concurrency")
 
 
 def skip_totals():
@@ -127,8 +127,12 @@ def page_post(action, data):
                                  data=urllib.parse.urlencode(data).encode(), method="POST",
                                  headers={"Authorization": f"Bearer {pbx.token}", "X-Requested-With": "XMLHttpRequest",
                                           "Accept": "application/json"})
-    with urllib.request.urlopen(req, context=pbx.tls, timeout=30) as r:
-        body = json.loads(r.read() or b"{}")
+    try:
+        with urllib.request.urlopen(req, context=pbx.tls, timeout=30) as r:
+            body = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        # A refused request (400) carries the page's message, which some scenarios expect.
+        body = json.loads(e.read() or b"{}")
     if not body.get("success"):
         raise RuntimeError(f"{action}: {body.get('message')}")
     return body.get("data")
@@ -283,7 +287,7 @@ class survey_rules:
     def __enter__(self):
         self.id = active_survey_id()
         row = db_rows(f"SELECT {', '.join(self.rules)} FROM m_Surveys WHERE id = {self.id}")[0]
-        self.saved = {k: str(v) for k, v in row.items()}
+        self.saved = {k: "" if v is None else str(v) for k, v in row.items()}
         page_post("saveSurvey", {"id": self.id, "fields": json.dumps(self.rules)})
         pause(6)  # dialplan reload
         return self
@@ -292,6 +296,24 @@ class survey_rules:
         page_post("saveSurvey", {"id": self.id, "fields": json.dumps(self.saved)})
         docker("exec", PBX_CONTAINER, "asterisk", "-rx", "database deltree call-feedback-cap", capture=True)
         pause(6)
+        return False
+
+
+class module_settings:
+    """Changes module settings through the page for the length of a scenario."""
+
+    def __init__(self, **settings):
+        self.settings = settings
+
+    def __enter__(self):
+        rows = db_rows("SELECT name, value FROM m_Settings")
+        stored = {r["name"]: r["value"] for r in rows}
+        self.saved = {k: (stored.get(k) or "").replace(",", " ") for k in self.settings}
+        page_post("saveSettings", {"settings": json.dumps(self.settings)})
+        return self
+
+    def __exit__(self, *exc):
+        page_post("saveSettings", {"settings": json.dumps(self.saved)})
         return False
 
 
@@ -377,6 +399,65 @@ def in_capped(lines):
             else:
                 pause(4)
             safe_hangup(c); pause(3)
+
+
+def hours_excluding_now():
+    """A two-hour survey window that starts an hour from now (PBX time), so now is outside it."""
+    out = docker("exec", PBX_CONTAINER, "date", "+%H", capture=True).strip()
+    hour = int(out)
+    return f"{(hour + 1) % 24:02d}:00", f"{(hour + 3) % 24:02d}:00"
+
+
+@scenario("With survey hours set (through the page) to a window that excludes now, an answered "
+          "inbound call is not surveyed and is counted as outside hours.", skipped("outside_hours"))
+def in_outside_hours(lines):
+    c, a = lines["carrier"], lines["301"]
+    start, end = hours_excluding_now()
+    with survey_rules(hours_start=start, hours_end=end):
+        c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()
+        pause(4); safe_hangup(c)
+
+
+def called_back(result):
+    problems = []
+    if result.get("refused") != "cf_CallBackTypeNumber":
+        problems.append(f"without a safe prefix the page answered {result.get('refused')!r}, expected cf_CallBackTypeNumber")
+    rows = db_rows(f"SELECT number, extension, confirmation FROM m_CallBacks WHERE followup_id = {int(result.get('case', 0))}")
+    if [(r["number"], r["extension"], r["confirmation"]) for r in rows] != [(CALLER, "301", "listed")]:
+        problems.append(f"logged call-backs {rows}, expected one to {CALLER} from 301")
+    status = db_rows(f"SELECT status FROM m_FollowUps WHERE id = {int(result.get('case', 0))}")
+    if not status or status[0]["status"] != "contacted":
+        problems.append(f"follow-up status {status}, expected contacted")
+    if not result.get("customer_rang"):
+        problems.append("the customer's line never rang")
+    if first(result["events"], "offered"):
+        problems.append("the call-back itself was surveyed")
+    return problems
+
+
+CALL_BACK_STATE = {}
+
+
+@scenario("Follow-up call-back: without a safe prefix the page refuses a one-click call-back; with "
+          "the carrier's prefix listed it rings 301, and once 301 answers it calls the customer "
+          "through the outbound route. The call-back is logged and the case marked contacted.", called_back)
+def follow_up_call_back(lines):
+    a, c = lines["301"], lines["carrier"]
+    cases = db_rows("SELECT f.id FROM m_FollowUps f JOIN m_SurveySessions s ON s.id = f.session_id "
+                    f"WHERE s.caller_num = '{CALLER}' AND f.status = 'open' ORDER BY f.id DESC LIMIT 1")
+    if not cases:
+        raise RuntimeError("No open follow-up for the CallSim caller; run in_partial first")
+    case = int(cases[0]["id"])
+    CALL_BACK_STATE.update(case=case, refused=None, customer_rang=False)
+    with module_settings(callback_prefixes=""):
+        try:
+            page_post("callBack", {"id": case, "extension": "301", "typed": ""})
+        except RuntimeError as e:
+            CALL_BACK_STATE["refused"] = str(e).split(": ", 1)[-1]
+    with module_settings(callback_prefixes=OUTBOUND_PREFIX):
+        page_post("callBack", {"id": case, "extension": "301", "typed": ""})
+        a.ringing(); pause(1); a.answer(); c.ringing(); CALL_BACK_STATE["customer_rang"] = True
+        pause(1); c.answer(); pause(3); safe_hangup(a); pause(2); safe_hangup(c)
 
 
 @scenario("Inbound to 301, answered; the caller hangs up first. Nothing can be surveyed.",
@@ -497,6 +578,7 @@ def run(names):
             ids = linkedids(events)
             expects_session = first(events, "offered") is not None
             result = {
+                **(CALL_BACK_STATE if s["name"] == "follow_up_call_back" else {}),
                 "events": events,
                 "sessions": wait_for_sessions(ids, expects_session, ATTRIBUTION_TIMEOUT if expects_session else 5),
                 "skips": {r: n - skips_before[r] for r, n in skip_totals().items()},

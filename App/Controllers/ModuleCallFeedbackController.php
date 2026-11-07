@@ -16,12 +16,14 @@ use MikoPBX\Core\Workers\Libs\WorkerModelsEvents\Actions\ReloadDialplanAction;
 use MikoPBX\Core\Workers\WorkerModelsEvents;
 use MikoPBX\Modules\PbxExtensionUtils;
 use Modules\ModuleCallFeedback\Lib\AccessPolicy;
+use Modules\ModuleCallFeedback\Lib\CallBacks;
 use Modules\ModuleCallFeedback\Lib\CallFeedbackConf;
 use Modules\ModuleCallFeedback\Lib\CdrReader;
 use Modules\ModuleCallFeedback\Lib\ConfigOptions;
 use Modules\ModuleCallFeedback\Lib\DialplanBuilder;
 use Modules\ModuleCallFeedback\Lib\FollowUps;
 use Modules\ModuleCallFeedback\Lib\ModuleSettings;
+use Modules\ModuleCallFeedback\Lib\Privacy;
 use Modules\ModuleCallFeedback\Lib\Results;
 use Modules\ModuleCallFeedback\Lib\ScalePresets;
 use Modules\ModuleCallFeedback\Lib\SurveyEditor;
@@ -89,6 +91,12 @@ class ModuleCallFeedbackController extends BaseController
         $this->json(fn (): array => $this->results()->overview($this->resultsQuery()));
     }
 
+    /** GET health: survey, from, to, direction. The survey's funnel and the calls not asked. */
+    public function healthAction(): void
+    {
+        $this->json(fn (): array => $this->results()->health($this->resultsQuery()));
+    }
+
     /** GET breakdown: survey, from, to, direction, breakdown. */
     public function breakdownAction(): void
     {
@@ -104,10 +112,21 @@ class ModuleCallFeedbackController extends BaseController
             $status = $this->request->getQuery('status');
             $page = $this->request->getQuery('page');
 
-            return (new FollowUps($this->moduleDb()))->list(
+            $db = $this->moduleDb();
+            $list = (new FollowUps($db))->list(
                 is_string($status) ? $status : '',
                 is_string($page) && preg_match('/^[1-9][0-9]{0,4}$/', $page) ? (int)$page : 1,
             );
+            // How each case may be called back, and the call-backs already placed.
+            $prefixes = ModuleSettings::load($db)['callback_prefixes'];
+            $history = (new CallBacks($db))->ofFollowUps(array_column($list['rows'], 'id'));
+            foreach ($list['rows'] as &$row) {
+                $row['callback'] = CallBacks::mode($row['caller_num'], $prefixes);
+                $row['callbacks'] = $history[$row['id']] ?? [];
+            }
+            unset($row);
+
+            return $list;
         });
     }
 
@@ -290,6 +309,51 @@ class ModuleCallFeedbackController extends BaseController
             $editor->removeExclusion($this->idParam($this->request->getPost('id')));
             return [];
         }, reload: true);
+    }
+
+    /**
+     * POST callBack: id (follow-up), extension, typed (the number, when it must
+     * be typed in). Rings the extension, then calls the customer through the
+     * outgoing routes. Checked and logged here; placed by the worker.
+     */
+    public function callBackAction(): void
+    {
+        $this->write(function (): array {
+            $db = $this->writableModuleDb();
+            $id = (new CallBacks($db))->request(
+                $this->idParam($this->request->getPost('id')),
+                (string)$this->request->getPost('extension'),
+                (string)$this->request->getPost('typed'),
+                ModuleSettings::load($db)['callback_prefixes'],
+                array_column(ConfigOptions::extensions($this->configDb()), 'number'),
+                $this->currentLogin(),
+                time(),
+            );
+            (new BeanstalkClient(CallFeedbackConf::COMMANDS_TUBE))->publish(json_encode([
+                'command' => CallFeedbackConf::COMMAND_CALL_BACK, 'callback' => (string)$id,
+            ], JSON_THROW_ON_ERROR));
+
+            return ['callback' => $id];
+        });
+    }
+
+    /**
+     * POST forgetNumber: number. Deletes every session, answer and follow-up of
+     * that number, and its frequency-cap key (through the worker, which has
+     * AMI). The log records the count and who asked, never the number.
+     */
+    public function forgetNumberAction(): void
+    {
+        $this->write(function (): array {
+            $result = (new Privacy($this->writableModuleDb()))->forgetNumber((string)$this->request->getPost('number'));
+            (new BeanstalkClient(CallFeedbackConf::COMMANDS_TUBE))->publish(json_encode([
+                'command' => CallFeedbackConf::COMMAND_FORGET_NUMBER, 'digits' => $result['digits'],
+            ], JSON_THROW_ON_ERROR));
+            SystemMessages::sysLogMsg(self::class, sprintf('Deleted all data for a number on request of %s: %d session(s)',
+                $this->currentLogin() ?: 'an admin', $result['sessions']), LOG_NOTICE);
+
+            return ['sessions' => $result['sessions']];
+        });
     }
 
     /** 403 for anyone who is not an admin: JSON for AJAX, a page otherwise. */

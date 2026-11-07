@@ -44,6 +44,7 @@ final class ModuleSettingsTest extends TestCase
     public static function invalid(): iterable
     {
         yield 'unknown setting' => [['debug' => '1']];
+        yield 'unknown summary' => [['summary' => 'hourly']];
         yield 'out of range' => [['nps_detractor_max' => '10']];
         yield 'not a number' => [['min_sample' => 'twenty']];
         yield 'header injection' => [['alert_emails' => "a@example.com\r\nBcc: b@example.com"]];

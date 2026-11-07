@@ -67,6 +67,11 @@ final class SurveyEditorTest extends TestCase
         yield 'unknown scale' => [['questions' => [['scale' => 'stars10']]]];
         yield 'yes/no as headline' => [['questions' => [['scale' => ScalePresets::YES_NO]]]];
         yield 'timeout too long' => [['questions' => [['scale' => ScalePresets::NPS, 'timeout_seconds' => '99']]]];
+        yield 'no days' => [['hours_days' => '0']];
+        yield 'bad time' => [['hours_start' => '9am', 'hours_end' => '18:00']];
+        yield 'start without end' => [['hours_start' => '09:00']];
+        yield 'same start and end' => [['hours_start' => '09:00', 'hours_end' => '09:00']];
+        yield 'time with dialplan' => [['hours_start' => '09:00,*,*,*?x)', 'hours_end' => '18:00']];
     }
 
     /** @param array<string, mixed> $fields */

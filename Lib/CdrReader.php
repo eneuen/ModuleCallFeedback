@@ -64,6 +64,19 @@ final class CdrReader
     }
 
     /**
+     * A value from the core's m_PbxSettings, or $default when it is not set
+     * (the core then uses its built-in default).
+     */
+    public static function pbxSetting(string $configDatabaseFile, string $key, string $default): string
+    {
+        $stmt = self::openReadOnly($configDatabaseFile)->prepare('SELECT value FROM m_PbxSettings WHERE key = ?');
+        $stmt->execute([$key]);
+        $value = $stmt->fetchColumn();
+
+        return $value === false || $value === null ? $default : (string)$value;
+    }
+
+    /**
      * Provider IDs (uniqid) from the core's configuration database, used to
      * tell inbound, outbound and internal calls apart.
      *

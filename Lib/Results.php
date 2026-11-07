@@ -24,7 +24,11 @@ use PDO;
  */
 final class Results
 {
-    public const array BREAKDOWNS = ['agent', 'queue', 'did', 'direction', 'hour', 'weekday'];
+    public const array BREAKDOWNS = ['agent', 'queue', 'did', 'direction', 'hour', 'weekday', 'wait', 'talk'];
+
+    /** Bucket lower bounds in seconds, with the key shown for each ("0-15", "15-30" ... "300+"). */
+    private const array WAIT_BUCKETS = [0, 15, 30, 60, 120, 300];
+    private const array TALK_BUCKETS = [0, 60, 180, 300, 600];
 
     /** Longest range a page may ask for. */
     private const int MAX_DAYS = 400;
@@ -122,6 +126,8 @@ final class Results
             $key = match ($breakdown) {
                 'hour'    => (int)date('G', $s['ended_at']),
                 'weekday' => (int)date('N', $s['ended_at']),
+                'wait'    => self::bucket($s['wait'], self::WAIT_BUCKETS),
+                'talk'    => self::bucket($s['talk'], self::TALK_BUCKETS),
                 default   => $s[$breakdown] ?? '',
             };
             $groups[(string)$key][] = $s['answers'][1];
@@ -132,11 +138,62 @@ final class Results
             $rows[] = ['key' => (string)$key, 'responses' => $summary['responses'], 'score' => $summary['score'],
                 'average' => $summary['average'], 'low_sample' => $summary['responses'] < $this->minSample];
         }
-        usort($rows, in_array($breakdown, ['hour', 'weekday'], true)
-            ? fn (array $a, array $b): int => (int)$a['key'] <=> (int)$b['key']
+        usort($rows, in_array($breakdown, ['hour', 'weekday', 'wait', 'talk'], true)
+            ? fn (array $a, array $b): int => [$a['key'] === '', (int)$a['key']] <=> [$b['key'] === '', (int)$b['key']]
             : fn (array $a, array $b): int => [$b['responses'], $a['key']] <=> [$a['responses'], $b['key']]);
 
         return ['breakdown' => $breakdown, 'scale' => $headline, 'min_sample' => $this->minSample, 'rows' => $rows];
+    }
+
+    /**
+     * Survey health: how far callers got through the survey (offered, each
+     * question answered, completed), the drop-off at each step, the calls left
+     * out of scores, and the calls the rules didn't ask, by reason.
+     *
+     * @param array<string, mixed> $q as overview()
+     *
+     * @return array<string, mixed>
+     */
+    public function health(array $q): array
+    {
+        [$survey, $from, $to, $direction] = $this->params($q);
+        $sessions = $this->sessions($survey['id'], $from, $to, $direction);
+        $counted = array_values(array_filter($sessions, fn (array $s): bool => !$s['excluded']));
+        $steps = [['step' => 'offered', 'count' => count($counted)]];
+        foreach (array_keys($survey['questions']) as $position) {
+            $steps[] = ['step' => "q$position", 'scale' => $survey['questions'][$position]['scale'],
+                'count' => count(array_filter($counted, fn (array $s): bool => isset($s['answers'][$position])))];
+        }
+        $steps[] = ['step' => 'completed', 'count' => count(array_filter($counted, fn (array $s): bool => $s['status'] === 'completed'))];
+        foreach ($steps as $i => &$step) {
+            $previous = $i === 0 ? null : $steps[$i - 1]['count'];
+            $step['share'] = self::percent($step['count'], $steps[0]['count']);
+            $step['drop'] = $previous === null ? null : $previous - $step['count'];
+        }
+        unset($step);
+
+        return [
+            'survey'   => ['id' => $survey['id'], 'name' => $survey['name'], 'version' => $survey['version']],
+            'steps'    => $steps,
+            'excluded' => count($sessions) - count($counted),
+            'skipped'  => $this->skipped($from, $to, $direction),
+        ];
+    }
+
+    /** The bucket's lower bound as the key, or '' when the value is unknown. */
+    private static function bucket(?int $seconds, array $bounds): string
+    {
+        if ($seconds === null) {
+            return '';
+        }
+        $key = $bounds[0];
+        foreach ($bounds as $bound) {
+            if ($seconds >= $bound) {
+                $key = $bound;
+            }
+        }
+
+        return (string)$key;
     }
 
     /**
@@ -196,7 +253,7 @@ final class Results
      */
     private function sessions(int $surveyId, DateTimeImmutable $from, DateTimeImmutable $to, string $direction): array
     {
-        $sql = 'SELECT id, status, direction, did, agent, queue, ended_at, excluded FROM m_SurveySessions
+        $sql = 'SELECT id, status, direction, did, agent, queue, ended_at, excluded, wait_seconds, cdr_talk_seconds FROM m_SurveySessions
             WHERE survey_id = ? AND is_test = 0 AND ended_at >= ? AND ended_at < ?';
         $params = [$surveyId, $from->getTimestamp(), $to->modify('+1 day')->getTimestamp()];
         if ($direction !== '') {
@@ -211,6 +268,8 @@ final class Results
                 'status' => (string)$row['status'], 'direction' => (string)$row['direction'], 'did' => (string)$row['did'],
                 'agent' => (string)$row['agent'], 'queue' => (string)$row['queue'], 'ended_at' => (int)$row['ended_at'],
                 'excluded' => (int)$row['excluded'] === 1, 'answers' => [],
+                'wait' => $row['wait_seconds'] === null ? null : (int)$row['wait_seconds'],
+                'talk' => $row['cdr_talk_seconds'] === null ? null : (int)$row['cdr_talk_seconds'],
             ];
         }
         if ($sessions !== []) {

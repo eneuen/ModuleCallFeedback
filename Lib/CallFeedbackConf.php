@@ -37,6 +37,8 @@ class CallFeedbackConf extends ConfigClass
      */
     public const string COMMANDS_TUBE = 'ModuleCallFeedback-commands';
     public const string COMMAND_TEST_CALL = 'test_call';
+    public const string COMMAND_FORGET_NUMBER = 'forget_number';
+    public const string COMMAND_CALL_BACK = 'call_back';
 
     public function extensionGenContexts(): string
     {

@@ -44,6 +44,9 @@ final class SurveyEditor
 
     private const array PROMPTS = ['intro_prompt_id', 'invalid_prompt_id', 'thanks_prompt_id'];
 
+    /** Every day of the week in the hours_days bit mask (Monday 1 ... Sunday 64). */
+    public const int ALL_DAYS = 127;
+
     /** Modules that would survey the same calls. */
     private const array CONFLICTING_MODULES = ['ModuleQualityAssessment'];
 
@@ -66,8 +69,8 @@ final class SurveyEditor
 
         return $this->transaction(function () use ($name, $language, $now): int {
             $this->db->prepare('INSERT INTO ' . SurveyRepository::SURVEYS . ' (family_id, version, name, status, language,
-                min_talk_seconds, sample_percent, frequency_cap_days, created_at) VALUES (0, 1, ?, ?, ?, 20, 100, 30, ?)')
-                ->execute([$name, SurveyRepository::DRAFT, $language, $now]);
+                min_talk_seconds, sample_percent, frequency_cap_days, hours_days, created_at) VALUES (0, 1, ?, ?, ?, 20, 100, 30, ?, ?)')
+                ->execute([$name, SurveyRepository::DRAFT, $language, self::ALL_DAYS, $now]);
             $id = (int)$this->db->lastInsertId();
             $this->db->prepare('UPDATE ' . SurveyRepository::SURVEYS . ' SET family_id = id WHERE id = ?')->execute([$id]);
             $this->writeQuestions($id, [['scale' => ScalePresets::CSAT]]);
@@ -102,14 +105,26 @@ final class SurveyEditor
                 $field === 'language' => self::language((string)$value),
                 in_array($field, self::PROMPTS, true) => self::promptId($value),
                 isset(self::RULES[$field]) => self::integer($field, $value, ...self::RULES[$field]),
+                $field === 'hours_days' => self::integer($field, $value, 1, self::ALL_DAYS),
+                in_array($field, ['hours_start', 'hours_end'], true) => self::time((string)$value),
                 $field === 'questions' => null,
                 default => throw new InvalidArgumentException("Unknown field: $field"),
             };
+        }
+        $start = array_key_exists('hours_start', $set) ? $set['hours_start'] : $survey['hours_start'];
+        $end = array_key_exists('hours_end', $set) ? $set['hours_end'] : $survey['hours_end'];
+        if (($start === '') !== ($end === '') || ($start !== '' && $start === $end)) {
+            throw new InvalidArgumentException('Set both a start and an end time, or neither.');
         }
         $questions = isset($fields['questions']) ? self::questions($fields['questions']) : null;
         unset($set['questions']);
 
         $this->transaction(function () use ($surveyId, $set, $questions): void {
+            foreach (['hours_start', 'hours_end'] as $field) {
+                if (($set[$field] ?? null) === '') {
+                    $set[$field] = null;
+                }
+            }
             if ($set !== []) {
                 $assignments = implode(', ', array_map(fn (string $f): string => "$f = ?", array_keys($set)));
                 $this->db->prepare('UPDATE ' . SurveyRepository::SURVEYS . " SET $assignments WHERE id = ?")
@@ -414,10 +429,12 @@ final class SurveyEditor
             }
             $this->db->prepare('INSERT INTO ' . SurveyRepository::SURVEYS . ' (family_id, version, name, status, language,
                 intro_prompt_id, invalid_prompt_id, thanks_prompt_id, min_talk_seconds, sample_percent, frequency_cap_days,
-                created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+                hours_days, hours_start, hours_end, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
                 $familyId ?? 0, $version, $survey['name'], SurveyRepository::DRAFT, $survey['language'],
                 $survey['intro_prompt_id'], $survey['invalid_prompt_id'], $survey['thanks_prompt_id'],
-                $survey['min_talk_seconds'], $survey['sample_percent'], $survey['frequency_cap_days'], $now,
+                $survey['min_talk_seconds'], $survey['sample_percent'], $survey['frequency_cap_days'],
+                $survey['hours_days'], $survey['hours_start'] === '' ? null : $survey['hours_start'],
+                $survey['hours_end'] === '' ? null : $survey['hours_end'], $now,
             ]);
             $id = (int)$this->db->lastInsertId();
             if ($familyId === null) {
@@ -435,7 +452,7 @@ final class SurveyEditor
         $this->db->prepare('DELETE FROM ' . SurveyRepository::QUESTIONS . ' WHERE survey_id = ?')->execute([$surveyId]);
         $insert = $this->db->prepare('INSERT INTO ' . SurveyRepository::QUESTIONS . '
             (survey_id, position, scale, prompt_id, timeout_seconds, retries) VALUES (?, ?, ?, ?, ?, ?)');
-        foreach (array_values($questions) as $i => $q) {
+        foreach ($questions as $i => $q) {
             $insert->execute([$surveyId, $i + 1, $q['scale'], $q['prompt_id'] ?? null, $q['timeout_seconds'] ?? 6, $q['retries'] ?? 2]);
         }
     }
@@ -451,7 +468,7 @@ final class SurveyEditor
             throw new InvalidArgumentException('A survey has 1 to ' . self::MAX_QUESTIONS . ' questions.');
         }
         $clean = [];
-        foreach (array_values($questions) as $i => $q) {
+        foreach ($questions as $i => $q) {
             $scale = is_array($q) ? (string)($q['scale'] ?? '') : '';
             if (!ScalePresets::exists($scale)) {
                 throw new InvalidArgumentException('Unknown scale.');
@@ -489,6 +506,16 @@ final class SurveyEditor
         }
 
         return $name;
+    }
+
+    /** 'HH:MM' (24-hour), or '' for no time limit. */
+    private static function time(string $value): string
+    {
+        if ($value !== '' && !preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', $value)) {
+            throw new InvalidArgumentException('Times must be HH:MM, 24-hour.');
+        }
+
+        return $value;
     }
 
     private static function language(string $language): string

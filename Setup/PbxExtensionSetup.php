@@ -59,4 +59,15 @@ class PbxExtensionSetup extends PbxExtensionSetupBase
 
         return parent::unInstallFiles($keepSettings);
     }
+
+    /**
+     * Also removes the sidebar entry's setting, which the core leaves in its
+     * settings table; installing adds it again.
+     */
+    public function unInstallDB(bool $keepSettings = false): bool
+    {
+        PbxSettings::findFirstByKey("AdditionalMenuItem$this->moduleUniqueID")?->delete();
+
+        return parent::unInstallDB($keepSettings);
+    }
 }

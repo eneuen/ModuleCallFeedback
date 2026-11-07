@@ -123,6 +123,14 @@ class SurveySession extends ModulesModelsBase
     public $queue;
 
     /**
+     * From the CDR: how long the caller waited until the first agent answered
+     * (inbound only).
+     *
+     * @Column(type="integer", nullable=true)
+     */
+    public $wait_seconds;
+
+    /**
      * From the CDR: the call's talk time.
      *
      * @Column(type="integer", nullable=true)

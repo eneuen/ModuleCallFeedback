@@ -89,7 +89,8 @@ final class DialplanBuilderTest extends TestCase
         $builder = $this->builder();
 
         $line = $builder->outboundBeforeDial(['id' => '35', 'providerid' => 'SIP-TRUNK-2EC28F63']);
-        self::assertStringContainsString('Set(DOPTIONS=${DOPTIONS}F(call-feedback-out^s^1))', $line);
+        self::assertStringContainsString('ExecIf($["${CF_SKIP}" != "1"]?Set(DOPTIONS=${DOPTIONS}F(call-feedback-out^s^1)))', $line,
+            'Calls the module places itself (call-backs) are not surveyed.');
         self::assertStringContainsString("Set(__CF_OUT_SURVEY=$id)", $line);
         self::assertSame('', $builder->outboundBeforeDial(['id' => 21]));
         self::assertSame('', $builder->incomingAfterDial(), 'No inbound target, no inbound hook.');
@@ -109,10 +110,27 @@ final class DialplanBuilderTest extends TestCase
         self::assertStringContainsString('GotoIf($[${RAND(1,100)} > 25]?sampled_out)', $survey);
         self::assertStringContainsString('GotoIf($[${GROUP_COUNT(surveys@call-feedback)} > 20]?concurrency)', $survey);
         self::assertStringContainsString('Set(CHANNEL(language)=en-en)', $survey);
+        self::assertStringContainsString('Set(TIMEOUT(absolute)=180)', $survey, 'A survey never holds a channel for long.');
         self::assertStringContainsString('Playback(/offload/asterisk/sounds/other/cf-intro)', $survey);
         self::assertStringContainsString("Gosub(call-feedback-q-$id-1,s,1)", $survey);
         self::assertStringContainsString("Gosub(call-feedback-q-$id-2,s,1)", $survey);
         self::assertStringContainsString('Playback(/offload/asterisk/sounds/other/cf-thanks)', $survey);
+    }
+
+    public function testTheHoursRuleUsesGotoIfTime(): void
+    {
+        $id = $this->active([['direction' => 'in', 'route_id' => 40]]);
+        self::assertStringNotContainsString('GotoIfTime', $this->builder()->contexts(), 'All days, all day: no check.');
+
+        // Monday to Friday (1+2+4+8+16), 09:00 to 18:00.
+        $this->editor->update($id, ['hours_days' => '31', 'hours_start' => '09:00', 'hours_end' => '18:00']);
+        $conf = $this->builder()->contexts();
+        self::assertStringContainsString('GotoIfTime(09:00-18:00,mon&tue&wed&thu&fri,*,*?in_hours)', $conf);
+        self::assertStringContainsString('(outside_hours),Set(CF_STATUS=skipped)', $conf);
+
+        // Weekends, all day.
+        $this->editor->update($id, ['hours_days' => '96', 'hours_start' => '', 'hours_end' => '']);
+        self::assertStringContainsString('GotoIfTime(*,sat&sun,*,*?in_hours)', $this->builder()->contexts());
     }
 
     public function testQuestionsAcceptOnlyTheirScalesKeys(): void

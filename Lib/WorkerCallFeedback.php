@@ -26,18 +26,37 @@ require_once 'Globals.php';
  *   written by FeedbackStore.
  * - Every 30 seconds, finished sessions get their agent, queue and talk time
  *   from the CDR (Attribution).
- * - Requests from the module's page (a test call) arrive on CallFeedbackConf::COMMANDS_TUBE:
- *   the web process has no AMI connection, this worker does.
+ * - Requests from the module's page (a test call, a follow-up call-back,
+ *   deleting a number's cap key) arrive on CallFeedbackConf::COMMANDS_TUBE: the web process has no
+ *   AMI connection, this worker does.
+ * - Once at start and then every night: callers' numbers past the PBX's
+ *   retention period are cleared, and expired frequency-cap keys deleted.
+ * - The daily or weekly summary email, if one is set.
  *
  * The logic lives in plain, unit-tested classes; this class only wires them
  * to the PBX.
  */
 class WorkerCallFeedback extends WorkerBase
 {
+    /** The context phones dial from; outgoing calls placed there follow the outgoing routes. */
+    private const string PHONES_CONTEXT = 'all_peers';
+
     /** Caller ID name the phone shows for a test call. */
     private const string TEST_CALLER_NAME = 'Survey test';
 
     private const int ATTRIBUTION_EVERY_SECONDS = 30;
+
+    /** Nightly maintenance runs on the first loop after this hour (PBX time). */
+    private const int NIGHTLY_HOUR = 3;
+
+    /** The summary email goes out on the first loop after this hour (PBX time). */
+    private const int SUMMARY_HOUR = 8;
+
+    /** Internal bookkeeping in m_Settings: the day the last summary went out. */
+    private const string SUMMARY_SENT_ON = 'summary_sent_on';
+
+    /** Retention the core uses when PBXRecordSavePeriod is not set. */
+    private const string DEFAULT_RETENTION_DAYS = '360';
 
     private FeedbackStore $store;
 
@@ -67,11 +86,23 @@ class WorkerCallFeedback extends WorkerBase
         $client->subscribe($this->makePingTubeName(self::class), [$this, 'pingCallBack']);
 
         $lastAttribution = 0;
+        $lastMaintenance = '';
+        $lastSummaryCheck = 0;
         while ($this->needRestart === false) {
             $client->wait(1);
             if (time() - $lastAttribution >= self::ATTRIBUTION_EVERY_SECONDS) {
                 $lastAttribution = time();
                 $this->attribute($cdr, $configFile);
+            }
+            // At start, then once a day after NIGHTLY_HOUR.
+            $today = date('Y-m-d');
+            if ($lastMaintenance === '' || ($lastMaintenance !== $today && (int)date('G') >= self::NIGHTLY_HOUR)) {
+                $lastMaintenance = $today;
+                $this->maintenance($configFile);
+            }
+            if ((int)date('G') >= self::SUMMARY_HOUR && time() - $lastSummaryCheck >= 60) {
+                $lastSummaryCheck = time();
+                $this->summary();
             }
         }
     }
@@ -85,7 +116,6 @@ class WorkerCallFeedback extends WorkerBase
             if ($result === FeedbackStore::UNKNOWN_SURVEY) {
                 SystemMessages::sysLogMsg(static::class, "Record for unknown survey {$record['survey']} dropped", LOG_WARNING);
             }
-
         } catch (InvalidArgumentException $e) {
             SystemMessages::sysLogMsg(static::class, 'Survey record rejected: ' . $e->getMessage(), LOG_WARNING);
         } catch (Throwable $e) {
@@ -138,10 +168,15 @@ class WorkerCallFeedback extends WorkerBase
     {
         try {
             $request = json_decode($message->getBody(), true, 4, JSON_THROW_ON_ERROR);
-            if (!is_array($request) || ($request['command'] ?? '') !== CallFeedbackConf::COMMAND_TEST_CALL) {
+            if (!is_array($request)) {
                 throw new InvalidArgumentException('Unknown command');
             }
-            $this->testCall((string)($request['survey'] ?? ''), (string)($request['extension'] ?? ''));
+            match ($request['command'] ?? '') {
+                CallFeedbackConf::COMMAND_TEST_CALL => $this->testCall((string)($request['survey'] ?? ''), (string)($request['extension'] ?? '')),
+                CallFeedbackConf::COMMAND_FORGET_NUMBER => $this->deleteCapKey((string)($request['digits'] ?? '')),
+                CallFeedbackConf::COMMAND_CALL_BACK => $this->callBack((string)($request['callback'] ?? '')),
+                default => throw new InvalidArgumentException('Unknown command'),
+            };
         } catch (InvalidArgumentException | \JsonException $e) {
             SystemMessages::sysLogMsg(static::class, 'Command rejected: ' . $e->getMessage(), LOG_WARNING);
         } catch (Throwable $e) {
@@ -180,6 +215,128 @@ class WorkerCallFeedback extends WorkerBase
         );
         if (strcasecmp((string)($result['Response'] ?? ''), 'Success') !== 0) {
             throw new \RuntimeException('Originate refused: ' . ($result['Message'] ?? 'no response'));
+        }
+    }
+
+    /**
+     * Places a logged call-back: rings the extension and, once it answers,
+     * dials the number through the PBX's outgoing routes, as the core's own
+     * click-to-call does, without surveying the customer again. The number and extension are read from the log
+     * the page wrote, never taken from the queue message.
+     */
+    private function callBack(string $id): void
+    {
+        if (!preg_match('/^[1-9][0-9]{0,9}$/', $id)) {
+            throw new InvalidArgumentException('Invalid call-back request');
+        }
+        $entry = (new CallBacks($this->moduleDb))->find((int)$id);
+        if ($entry === null || !preg_match('/^[0-9]{1,20}$/', $entry['number'])) {
+            throw new InvalidArgumentException('No such call-back');
+        }
+        $config = $this->di->getShared('config');
+        $known = array_column(ConfigOptions::extensions(CdrReader::openReadOnly((string)$config->path('database.dbfile'))), 'number');
+        if (!in_array($entry['extension'], $known, true)) {
+            throw new InvalidArgumentException('Unknown extension');
+        }
+        // As the core's Util::amiOriginate() (click-to-call), plus CF_SKIP so the
+        // customer is not surveyed again at the end of the call-back.
+        $result = Util::getAstManager('off')->Originate(
+            'Local/' . $entry['extension'] . '@internal-originate',
+            $entry['number'],
+            self::PHONES_CONTEXT,
+            1,
+            null,
+            null,
+            null,
+            null,
+            'pt1c_cid=' . $entry['number'] . ',__peer_mobile=,__' . DialplanBuilder::SKIP_VARIABLE . '=1',
+            null,
+            true,
+        );
+        if (strcasecmp((string)($result['Response'] ?? ''), 'Success') !== 0) {
+            throw new \RuntimeException('Originate refused: ' . ($result['Message'] ?? 'no response'));
+        }
+    }
+
+    /**
+     * The daily (yesterday) or weekly (the last 7 days, sent on Mondays)
+     * summary email, once per day at most.
+     */
+    private function summary(): void
+    {
+        try {
+            $settings = ModuleSettings::load($this->moduleDb);
+            $today = date('Y-m-d');
+            $weekly = $settings['summary'] === 'weekly';
+            $sentOn = (string)$this->moduleDb->query("SELECT value FROM m_Settings WHERE name = '" . self::SUMMARY_SENT_ON . "'")->fetchColumn();
+            if ($settings['summary'] === 'off' || $settings['alert_emails'] === [] || $sentOn === $today
+                || ($weekly && date('N') !== '1')) {
+                return;
+            }
+            $to = date('Y-m-d', strtotime('yesterday'));
+            $from = $weekly ? date('Y-m-d', strtotime('-7 days')) : $to;
+            $results = new Results($this->moduleDb, (int)$settings['min_sample']);
+            $overviews = [];
+            foreach ($results->versions() as $version) {
+                if ($version['status'] === SurveyRepository::ACTIVE) {
+                    $overviews[] = $results->overview(['survey' => (string)$version['id'], 'from' => $from, 'to' => $to, 'direction' => '']);
+                }
+            }
+            $open = (new FollowUps($this->moduleDb))->list('open', 1)['total'];
+            $message = SummaryMessage::build((string)PbxSettings::getValueByKey(PbxSettings::PBX_LANGUAGE), $weekly, $from, $to, $overviews, $open);
+            // Recorded first, so a failing mail server is not retried every minute.
+            $this->moduleDb->prepare('INSERT INTO m_Settings (name, value) VALUES (?, ?)
+                ON CONFLICT (name) DO UPDATE SET value = excluded.value')->execute([self::SUMMARY_SENT_ON, $today]);
+            $error = null;
+            if (!(new Notifications())->sendMail($settings['alert_emails'], $message['subject'], $message['body'], '', $error, false)) {
+                SystemMessages::sysLogMsg(static::class, 'Summary email not sent: ' . $error, LOG_WARNING);
+            }
+        } catch (Throwable $e) {
+            SystemMessages::sysLogMsg(static::class, 'Summary failed: ' . $e->getMessage(), LOG_ERR);
+        }
+    }
+
+    /** Deletes one number's frequency-cap key. */
+    private function deleteCapKey(string $digits): void
+    {
+        if (!preg_match('/^[0-9]{1,20}$/', $digits)) {
+            throw new InvalidArgumentException('Invalid number');
+        }
+        Util::getAstManager('off')->sendRequestTimeout('DBDel', ['Family' => DialplanBuilder::DB_CAP, 'Key' => $digits]);
+    }
+
+    /**
+     * Retention: clears callers' numbers past the PBX's retention period, and
+     * deletes frequency-cap keys older than their lifetime. A key is deleted
+     * only if its stored time is still past the cut-off: the number may have
+     * been asked again since. Logs counts, never numbers.
+     */
+    private function maintenance(string $configFile): void
+    {
+        try {
+            $retention = (int)CdrReader::pbxSetting($configFile, 'PBXRecordSavePeriod', self::DEFAULT_RETENTION_DAYS);
+            $privacy = new Privacy($this->moduleDb);
+            $lifetime = $privacy->capKeyLifetimeDays($retention);
+            $deleted = 0;
+            if ($lifetime > 0) {
+                $check = $privacy->keysToCheck($lifetime, time());
+                $ami = Util::getAstManager('off');
+                foreach ($check['numbers'] as $digits) {
+                    $stored = $ami->DBGet(DialplanBuilder::DB_CAP, $digits);
+                    $value = (string)($stored['data']['DBGetResponse'][0]['Val'] ?? '');
+                    if ($value !== '' && ctype_digit($value) && (int)$value < $check['cutoff']) {
+                        $ami->sendRequestTimeout('DBDel', ['Family' => DialplanBuilder::DB_CAP, 'Key' => $digits]);
+                        $deleted++;
+                    }
+                }
+                $privacy->markKeysChecked($check['cutoff']);
+            }
+            $cleared = $privacy->applyRetention($retention, time());
+            if ($deleted > 0 || $cleared > 0) {
+                SystemMessages::sysLogMsg(static::class, "Retention: cleared $cleared caller number(s), deleted $deleted frequency-cap key(s)", LOG_INFO);
+            }
+        } catch (Throwable $e) {
+            SystemMessages::sysLogMsg(static::class, 'Maintenance failed: ' . $e->getMessage(), LOG_ERR);
         }
     }
 

@@ -99,6 +99,28 @@ class Survey extends ModulesModelsBase
     public $frequency_cap_days;
 
     /**
+     * Days of the week the survey runs, as a bit mask: Monday 1, Tuesday 2 ...
+     * Sunday 64; 127 is every day.
+     *
+     * @Column(type="integer", nullable=false, default="127")
+     */
+    public $hours_days;
+
+    /**
+     * 'HH:MM' the survey starts each day, PBX time; empty with hours_end for all day.
+     *
+     * @Column(type="string", nullable=true)
+     */
+    public $hours_start;
+
+    /**
+     * 'HH:MM' the survey stops each day; earlier than hours_start runs past midnight.
+     *
+     * @Column(type="string", nullable=true)
+     */
+    public $hours_end;
+
+    /**
      * @Column(type="integer", nullable=false)
      */
     public $created_at;
