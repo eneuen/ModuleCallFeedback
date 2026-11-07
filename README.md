@@ -21,14 +21,16 @@ Everything is under **Modules → Call Feedback**, for administrators only.
 5. **Test call.** Ring an extension and answer the survey as a caller would. A version needs a test call before it can go live.
 6. **Activate.** Once active, the questions and prompts are fixed so results stay comparable; to change the wording, create a new version. Rules and routes can still change.
 
-**Settings** holds the detractor thresholds (CSAT ≤ 2, NPS ≤ 6, CES ≤ 2 by default), alert recipients and a daily or weekly summary email, the number prefixes that may be called back in one click, the minimum responses before a score is shown, the limit on surveys running at once, the list of numbers never to survey, and "delete all data for a number".
+**Settings** holds the scores that open a follow-up (CSAT 1–2, NPS 0–6, CES 1–2 by default), alert recipients and a daily or weekly summary email, the number prefixes that may be called back in one click, the minimum responses before a score is shown, and the limit on surveys running at once; these are saved together with one Save button. Below them, changes apply at once: the list of numbers never to survey, and "delete all data for a number", next to how long the PBX keeps callers' numbers.
 
 ## What it shows
 
-- **Overview:** the headline score with its change against the previous period, the average, response and completion rates, the resolution rate, the score over time and the distribution of answers. Every score shows its response count, and scores with too few responses are not shown.
+- **Overview:** the headline score with its responses, average and change against the previous period; the response rate; the resolution rate (or the completion rate when there is no yes/no question); the open follow-ups; the score over time, by day or by week; and the distribution of answers. Every score shows its response count, and scores with too few responses are not shown.
 - **Breakdowns:** the score by agent, queue, line, direction, hour of day, weekday, time to answer or talk time, with small groups greyed out.
-- **Survey health:** how many callers were offered the survey, answered each question and finished it, where they dropped off, and how many calls each rule left unasked.
-- **Follow-ups:** every call with a low headline score, newest first, with the caller's number, agent and queue, a status (open, contacted, resolved) and a note. **Call back** rings an extension of your choice and, when it answers, calls the customer through the normal outgoing routes.
+- **Survey health:** of the calls an agent answered on the survey's routes, how many were surveyed and how many callers reached the end; where callers left (the question most callers leave at is marked); and how many calls each rule left unsurveyed.
+- **Follow-ups:** every call with a low headline score, newest first, filtered by status (open, contacted, resolved), with the caller's number, agent and queue. **Update** opens the case to set its status and a note. **Call back** rings an extension of your choice and, when it answers, calls the customer through the normal outgoing routes.
+
+Charts download as PNG images and results tables as CSV files.
 
 Results are per survey version: different wordings are never averaged together.
 
@@ -39,7 +41,7 @@ The module adds its survey through MikoPBX's module dialplan hooks; it doesn't e
 - **Inbound:** MikoPBX's inbound routes dial with Asterisk's `g` option, so the caller's channel continues after the agent hangs up. The module's after-dial hook enters the survey with `Gosub` and returns, so any custom after-dial dialplan still runs.
 - **Outbound:** on targeted routes, the module appends `F(...)` to the dial options, which moves the customer into the survey when the agent hangs up.
 - **Only calls an agent answered are surveyed.** The module marks when an agent's phone answers (inbound) or hands the agent's talk time to the survey (outbound), so calls that only reached an IVR, voicemail or a hangup action are skipped, and talk time excludes time on hold.
-- **Not surveyed:** callers who hang up first, and blind-transferred calls (the transfer moves the caller out of the inbound route). Calls a rule skips (too short, excluded, asked recently, not sampled, too many surveys at once) are counted per day, route and reason.
+- **Not surveyed:** callers who hang up first, and blind-transferred calls (the transfer moves the caller out of the inbound route). Calls a rule skips (too short, outside survey hours, excluded, asked recently, not sampled, too many surveys at once) are counted per day, survey version, route and reason.
 - **Recording results:** answers are kept in channel variables during the survey. When the customer's channel ends, a hangup handler runs the module's AGI script once. It checks every value against a fixed pattern and passes the record to the module's worker over the PBX's internal Beanstalk queue. The worker checks it again, keeps only answers that are on the question's scale, and stores the session, so a caller who hangs up after the first question still counts.
 - **Attribution:** once the call is in the CDR, the worker fills in the answering agent, the queue and the call's real talk time from its CDR legs (the same leg-stitching logic as the Call Insights module). A session under the minimum talk time is kept but left out of scores, and a session whose call never appears in the CDR is discarded. Only then does a low score open a follow-up and send the alert.
 

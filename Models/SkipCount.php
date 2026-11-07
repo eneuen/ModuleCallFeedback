@@ -9,14 +9,14 @@ namespace Modules\ModuleCallFeedback\Models;
 use MikoPBX\Modules\Models\ModulesModelsBase;
 
 /**
- * How many eligible calls a rule left unasked, per day, direction, route and
- * reason (for example too short). Unanswered calls are not counted here; the
- * CDR has them.
+ * How many eligible calls a rule left unasked, per day, survey version,
+ * direction, route and reason (for example too short). Unanswered calls are
+ * not counted here; the CDR has them.
  *
  * The core creates the table from these annotations; FeedbackStore writes it.
  *
  * @Indexes(
- *     [name='unique_bucket', columns=['day', 'direction', 'route_key', 'reason'], type='UNIQUE']
+ *     [name='unique_bucket', columns=['day', 'survey_id', 'direction', 'route_key', 'reason'], type='UNIQUE']
  * )
  */
 class SkipCount extends ModulesModelsBase
@@ -34,6 +34,13 @@ class SkipCount extends ModulesModelsBase
      * @Column(type="string", nullable=false)
      */
     public $day;
+
+    /**
+     * The survey version whose rules skipped the call.
+     *
+     * @Column(type="integer", nullable=false, default="0")
+     */
+    public $survey_id;
 
     /**
      * @Column(type="string", nullable=false)

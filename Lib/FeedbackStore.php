@@ -45,7 +45,7 @@ final class FeedbackStore
     /**
      * Stores one validated end-of-call record (Handoff::validate()).
      *
-     * A skipped call adds one to its day/route/reason counter. Any other call
+     * A skipped call adds one to its day/survey/route/reason counter. Any other call
      * becomes a session with its answers. Answers outside the range of the
      * survey's question are dropped, and the status is worked out from the
      * answers that remain, so the stored status always matches the stored
@@ -65,7 +65,7 @@ final class FeedbackStore
             return self::UNKNOWN_SURVEY;
         }
         if ($record['status'] === 'skipped') {
-            $this->countSkip($record);
+            $this->countSkip($record, (int)$survey['id']);
             return self::SKIP_COUNTED;
         }
 
@@ -185,7 +185,7 @@ final class FeedbackStore
     /** @return list<array<string, mixed>> */
     public function skipCounts(): array
     {
-        return $this->db->query('SELECT day, direction, route_key, reason, count FROM ' . self::SKIPS . ' ORDER BY id')
+        return $this->db->query('SELECT day, survey_id, direction, route_key, reason, count FROM ' . self::SKIPS . ' ORDER BY id')
             ->fetchAll();
     }
 
@@ -212,14 +212,15 @@ final class FeedbackStore
         return count($answers) >= $questionCount ? 'completed' : 'started';
     }
 
-    private function countSkip(array $record): void
+    private function countSkip(array $record, int $surveyId): void
     {
         $stmt = $this->db->prepare(
-            'INSERT INTO ' . self::SKIPS . ' (day, direction, route_key, reason, count) VALUES (?, ?, ?, ?, 1)
-             ON CONFLICT (day, direction, route_key, reason) DO UPDATE SET count = count + 1'
+            'INSERT INTO ' . self::SKIPS . ' (day, survey_id, direction, route_key, reason, count) VALUES (?, ?, ?, ?, ?, 1)
+             ON CONFLICT (day, survey_id, direction, route_key, reason) DO UPDATE SET count = count + 1'
         );
         $stmt->execute([
             date('Y-m-d', $record['ended_at']),
+            $surveyId,
             $record['direction'],
             self::routeKey($record),
             $record['reason'],

@@ -35,6 +35,9 @@ class CallFeedbackConf extends ConfigClass
      * Requests from the module's page to its worker, such as a test call. Kept
      * here, not on the worker class, so the page never loads the worker's file.
      */
+    /** Call-history retention (days) the core uses when PBXRecordSavePeriod is not set. */
+    public const string DEFAULT_RETENTION_DAYS = '360';
+
     public const string COMMANDS_TUBE = 'ModuleCallFeedback-commands';
     public const string COMMAND_TEST_CALL = 'test_call';
     public const string COMMAND_FORGET_NUMBER = 'forget_number';

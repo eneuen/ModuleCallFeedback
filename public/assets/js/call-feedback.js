@@ -3,11 +3,38 @@
   // public/assets/js/src/call-feedback.js
   var BASE = `${globalRootUrl}module-call-feedback/`;
   var t = (key, fallback) => globalTranslate && globalTranslate[key] || fallback;
+  var SHADES = {
+    grey: ["#f5f7fa", "#e4e7eb", "#cbd2d9", "#9aa5b1", "#7b8794", "#616e7c", "#52606d", "#3e4c59", "#323f4b", "#1f2933"],
+    blue: ["#ebf4fc", "#cfe5f7", "#a5cdef", "#6eafe3", "#3d93d8", "#2185d0", "#1a6fb0", "#155a8f", "#10456e", "#0b3250"],
+    green: ["#e6f6ec", "#c1e8cf", "#93d6ac", "#5fc086", "#38a866", "#2f9157", "#247548", "#1b5c39", "#13432a", "#0b2b1b"],
+    red: ["#fdecec", "#f8cfcf", "#f1a6a6", "#e77777", "#dc5353", "#cc3b3b", "#ab2f2f", "#8a2525", "#691c1c", "#481313"],
+    amber: ["#fff6e5", "#fde8bf", "#fbd38d", "#f6b956", "#f0a02e", "#de8a15", "#b8700f", "#90560c", "#6a3f08", "#452905"]
+  };
+  var G = SHADES.grey;
+  var PALETTE = {
+    primary: SHADES.blue[5],
+    primaryDark: SHADES.blue[7],
+    lowSample: G[3],
+    volume: G[1],
+    bad: SHADES.red[4],
+    neutral: SHADES.amber[4],
+    good: SHADES.green[4]
+  };
+  echarts.registerTheme("call-feedback", {
+    color: [PALETTE.primary, G[3]],
+    backgroundColor: "transparent",
+    textStyle: { color: G[7] },
+    title: { textStyle: { color: G[6], fontSize: 13, fontWeight: "normal" } },
+    legend: { textStyle: { color: G[7] }, inactiveColor: G[2] },
+    tooltip: { backgroundColor: "#fff", borderColor: G[2], borderWidth: 1, textStyle: { color: G[8] }, extraCssText: "box-shadow: 0 2px 8px rgba(31, 41, 51, .12);" },
+    categoryAxis: { axisLine: { lineStyle: { color: G[2] } }, axisTick: { show: false }, axisLabel: { color: G[6] }, splitLine: { lineStyle: { color: G[1] } } },
+    valueAxis: { axisLine: { show: false }, axisLabel: { color: G[6] }, nameTextStyle: { color: G[6] }, splitLine: { lineStyle: { color: G[1] } } }
+  });
   var SCALES = {
-    csat5: ["cf_ScaleCsat", "CSAT: satisfaction, 1\u20135"],
-    nps11: ["cf_ScaleNps", "NPS: likely to recommend, 0\u201310"],
-    ces5: ["cf_ScaleCes", "CES: how easy it was, 1\u20135"],
-    yesno: ["cf_ScaleYesNo", "Yes or no (1 yes, 2 no)"]
+    csat5: ["cf_ScaleCsat", "CSAT: Satisfaction, 1\u20135"],
+    nps11: ["cf_ScaleNps", "NPS: Likely to Recommend, 0\u201310"],
+    ces5: ["cf_ScaleCes", "CES: How Easy It Was, 1\u20135"],
+    yesno: ["cf_ScaleYesNo", "Yes or No (1 Yes, 2 No)"]
   };
   var HEADLINE_SCALES = ["csat5", "nps11", "ces5"];
   var LANGUAGES = { "en-en": ["cf_LanguageEnglish", "English"], "ru-ru": ["cf_LanguageRussian", "Russian"] };
@@ -31,16 +58,26 @@
     cf_ProblemOtherSurveyModule: "Another post-call survey module is enabled and would survey the same calls. Disable it first."
   };
   var PROMPT_FIELDS = [
-    ["intro_prompt_id", "cf_PromptIntro", 'Intro: "Please stay on the line for a short survey"'],
-    ["invalid_prompt_id", "cf_PromptInvalid", 'Invalid key (optional): "Sorry, that key is not valid"'],
-    ["thanks_prompt_id", "cf_PromptThanks", "Thank you"]
+    ["intro_prompt_id", "cf_PromptIntro", "Intro", "cf_PromptIntroHint", 'For example: "Please stay on the line for a short survey."'],
+    ["thanks_prompt_id", "cf_PromptThanks", "Thank You", "cf_PromptThanksHint", "Played after the last question."],
+    ["invalid_prompt_id", "cf_PromptInvalid", "Invalid Key (Optional)", "cf_PromptInvalidHint", 'For example: "Sorry, that key is not valid."']
   ];
   var RULE_FIELDS = [
-    ["min_talk_seconds", "cf_MinTalk", "Minimum talk time (seconds)", 0, 600],
-    ["sample_percent", "cf_Sampling", "Survey this share of calls (%)", 1, 100],
-    ["frequency_cap_days", "cf_FrequencyCap", "Don't ask the same number again for (days, 0 = always ask)", 0, 365]
+    ["min_talk_seconds", "cf_MinTalk", "Minimum Talk Time (Seconds)", 0, 600, "cf_MinTalkHint", "Shorter calls are not surveyed."],
+    ["sample_percent", "cf_Sampling", "Share of Calls to Survey (%)", 1, 100, null, null],
+    ["frequency_cap_days", "cf_FrequencyCap", "Ask a Number Again After (Days)", 0, 365, "cf_FrequencyCapHint", "0: every call is asked."]
   ];
-  var state = { options: null, editing: null, testPoll: null, tab: "overview", versions: [], labels: null, charts: {} };
+  var state = {
+    options: null,
+    editing: null,
+    testPoll: null,
+    tab: "overview",
+    versions: [],
+    labels: null,
+    charts: {},
+    followStatus: "open",
+    followUp: null
+  };
   var METRICS = {
     csat5: ["cf_MetricCsat", "CSAT", "%"],
     nps11: ["cf_MetricNps", "NPS", ""],
@@ -48,18 +85,13 @@
   };
   var WEEKDAYS = [["cf_Mon", "Mon"], ["cf_Tue", "Tue"], ["cf_Wed", "Wed"], ["cf_Thu", "Thu"], ["cf_Fri", "Fri"], ["cf_Sat", "Sat"], ["cf_Sun", "Sun"]];
   var SKIP_REASONS = {
-    too_short: ["cf_SkipTooShort", "too short"],
-    outside_hours: ["cf_SkipOutsideHours", "outside survey hours"],
-    excluded: ["cf_SkipExcluded", "excluded number"],
-    capped: ["cf_SkipCapped", "asked recently"],
-    sampled_out: ["cf_SkipSampled", "not sampled"],
-    concurrency: ["cf_SkipConcurrency", "too many surveys at once"]
+    too_short: ["cf_SkipTooShort", "Too short"],
+    outside_hours: ["cf_SkipOutsideHours", "Outside survey hours"],
+    excluded: ["cf_SkipExcluded", "Excluded number"],
+    capped: ["cf_SkipCapped", "Asked recently"],
+    sampled_out: ["cf_SkipSampled", "Not sampled"],
+    concurrency: ["cf_SkipConcurrency", "Too many surveys at once"]
   };
-  var BLUE = "#2185d0";
-  var GREY = "#cbd2d9";
-  var RED = "#cc3b3b";
-  var AMBER = "#f0a02e";
-  var GREEN = "#2f9157";
   var $id = (id) => document.getElementById(id);
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
@@ -82,17 +114,22 @@
   var languageLabel = (l) => LANGUAGES[l] ? label(LANGUAGES[l]) : l;
   var problemLabel = (key) => t(key, PROBLEMS[key] || key);
   var dateTime = (epoch) => epoch ? new Date(epoch * 1e3).toLocaleString() : "\u2014";
+  var shortDateTime = (epoch) => epoch ? new Date(epoch * 1e3).toLocaleString(void 0, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "\u2014";
+  var shortDate = (iso) => (/* @__PURE__ */ new Date(`${iso}T00:00:00`)).toLocaleDateString(void 0, { day: "numeric", month: "short" });
+  var count = (n) => Number(n).toLocaleString();
+  var sub = (text, values) => Object.entries(values).reduce((s, [k, v]) => s.split(`{${k}}`).join(String(v)), text);
   function failText(xhr, fallback) {
     const msg = xhr && xhr.responseJSON && xhr.responseJSON.message;
     if (typeof msg === "string" && msg !== "") return PROBLEMS[msg] ? problemLabel(msg) : msg;
     return fallback;
   }
-  function showError(message2) {
+  function showError(text) {
     const box = $id("cf-error");
-    box.textContent = message2;
+    box.textContent = text;
     box.classList.remove("cf-hidden");
   }
   var clearError = () => $id("cf-error").classList.add("cf-hidden");
+  var saveFailed = (xhr) => failText(xhr, t("cf_SaveFailed", "The change could not be saved."));
   function get(action, data = {}) {
     return $.ajax({ url: BASE + action, method: "GET", data, dataType: "json" }).then((r) => r && r.success ? r.data : $.Deferred().reject({ responseJSON: r })).fail((xhr) => showError(failText(xhr, t("cf_LoadFailed", "Call Feedback could not load this data."))));
   }
@@ -129,8 +166,9 @@
   }
   function soundOptions(withNone) {
     const files = state.options.soundFiles.map((f) => [f.id, f.name]);
-    return withNone ? [["", t("cf_NoSound", "\u2014 none \u2014")], ...files] : [["", t("cf_ChooseSound", "\u2014 choose a sound file \u2014")], ...files];
+    return withNone ? [["", t("cf_NoSound", "\u2014 None \u2014")], ...files] : [["", t("cf_ChooseSound", "\u2014 Choose a Sound File \u2014")], ...files];
   }
+  var extensionOptions = () => state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
   function routeText(direction, id) {
     const list = state.options.routes[direction] || [];
     const r = list.find((x) => x.id === id);
@@ -143,6 +181,57 @@
     const what = r.prefix ? `${r.prefix}\u2026` : t("cf_AnyNumber", "any number");
     return r.name ? `${r.name} (${what})` : what;
   }
+  function routeShort(direction, id) {
+    const r = (state.options.routes[direction] || []).find((x) => x.id === id);
+    if (!r) return `#${id}`;
+    if (r.name) return r.name;
+    if (direction === "in") return r.number || t("cf_AnyNumber", "any number");
+    return r.prefix ? `${r.prefix}\u2026` : t("cf_AnyNumber", "any number");
+  }
+  function csvCell(value) {
+    let s = value === null || value === void 0 ? "" : String(value);
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  function download(filename, blob) {
+    const a = el("a", { href: URL.createObjectURL(blob), download: filename });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1e3);
+  }
+  var rangeSuffix = () => `${$id("cf-from").value}-${$id("cf-to").value}`;
+  function downloadTable(table, name) {
+    const rows = [...table.rows].filter((tr) => !tr.querySelector(".cf-empty-cell")).map((tr) => [...tr.cells].filter((c) => !c.classList.contains("cf-bar-cell")).map((c) => c.textContent.trim()));
+    const csv = rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+    download(`${name}-${rangeSuffix()}.csv`, new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  }
+  function downloadChart(id, name) {
+    const c = state.charts[id];
+    if (!c) return;
+    const bytes = atob(c.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#fff" }).split(",")[1]);
+    download(`${name}-${rangeSuffix()}.png`, new Blob([Uint8Array.from(bytes, (ch) => ch.charCodeAt(0))], { type: "image/png" }));
+  }
+  function sectionActions(node) {
+    for (let n = node.previousElementSibling; n; n = n.previousElementSibling) {
+      if (n.classList.contains("cf-section-head")) return n.querySelector(".cf-section-actions");
+    }
+    return null;
+  }
+  function addExportButtons() {
+    const button = (text, icon, title, onClick) => el(
+      "button",
+      { class: "ui mini basic compact button", type: "button", title, onclick: onClick },
+      el("i", { class: `${icon} icon` }),
+      text
+    );
+    [["cf-chart-trend", "score-over-time"], ["cf-chart-distribution", "answers"], ["cf-chart-progress", "where-callers-leave"]].forEach(([id, name]) => {
+      sectionActions($id(id)).append(button(t("cf_ExportPng", "PNG"), "image", t("cf_ExportPngHint", "Download this chart as an image"), () => downloadChart(id, name)));
+    });
+    [["cf-breakdown-table", () => `score-by-${$id("cf-breakdown").value}`], ["cf-health-table", () => "where-callers-leave"], ["cf-skipped-table", () => "calls-not-surveyed"]].forEach(([id, name]) => {
+      sectionActions($id(id)).append(button(t("cf_ExportCsv", "CSV"), "download", t("cf_ExportCsvHint", "Download this table as CSV"), () => downloadTable($id(id), name())));
+    });
+  }
   function loadSurveys() {
     return get("surveys").then((rows) => {
       const table = $id("cf-surveys");
@@ -150,25 +239,31 @@
         "tr",
         {},
         el("th", { text: t("cf_Name", "Name") }),
-        el("th", { text: t("cf_Version", "Version") }),
         el("th", { text: t("cf_Status", "Status") }),
-        el("th", { text: t("cf_RunsOn", "Runs on") }),
-        el("th", { class: "cf-num", text: t("cf_Last7Days", "Answered, last 7 days") })
+        el("th", { text: t("cf_RunsOn", "Runs On") }),
+        el("th", { class: "cf-num", text: t("cf_Last7Days", "Last 7 Days") })
       ));
       const body = el("tbody");
       if (rows.length === 0) {
-        body.append(el("tr", {}, el("td", { colspan: "5", class: "cf-muted", text: t("cf_NoSurveys", "No surveys yet. Create one to start.") })));
+        body.append(el("tr", {}, el("td", { colspan: "4", class: "cf-empty-cell", text: t("cf_NoSurveys", "No surveys yet. Create one to start.") })));
       }
       rows.forEach((s) => {
-        const runsOn = s.targets.length === 0 ? el("span", { class: "cf-muted", text: t("cf_NoRoutes", "No routes") }) : s.targets.map((tg) => routeText(tg.direction, tg.route_id)).join("; ");
+        const runsOn = s.targets.length === 0 ? el("span", { class: "cf-muted", text: t("cf_NoRoutes", "No routes") }) : el("div", { class: "cf-route-labels" }, s.targets.map((tg) => el("span", {
+          class: "ui small basic label",
+          title: routeText(tg.direction, tg.route_id)
+        }, el("i", { class: `${tg.direction === "in" ? "sign in alternate" : "sign out alternate"} icon` }), routeShort(tg.direction, tg.route_id))));
         body.append(el(
           "tr",
           { class: "cf-clickable", onclick: () => openEditor(s.id) },
-          el("td", {}, el("a", { href: "#", text: s.name, onclick: (e) => e.preventDefault() })),
-          el("td", { text: `v${s.version}` }),
+          el(
+            "td",
+            {},
+            el("a", { href: "#", text: s.name, onclick: (e) => e.preventDefault() }),
+            el("div", { class: "cf-sub-line", text: `${t("cf_Version", "Version")} ${s.version} \xB7 ${languageLabel(s.language)}` })
+          ),
           el("td", {}, statusLabel(s.status)),
           el("td", {}, runsOn),
-          el("td", { class: "cf-num", text: s.offered ? `${s.responded} / ${s.offered}` : "\u2014" })
+          el("td", { class: "cf-num", text: s.offered ? sub(t("cf_AnsweredOf", "{n} of {offered} answered"), { n: count(s.responded), offered: count(s.offered) }) : "\u2014" })
         ));
       });
       table.replaceChildren(head, body);
@@ -187,7 +282,7 @@
       $id("cf-new-form").classList.add("cf-hidden");
       $id("cf-new-name").value = "";
       openEditor(r.id);
-    }, (xhr) => showError(failText(xhr, t("cf_SaveFailed", "The change could not be saved."))));
+    }, (xhr) => showError(saveFailed(xhr)));
   }
   function openEditor(id) {
     clearError();
@@ -200,7 +295,7 @@
       box.replaceChildren(renderEditor(data));
     });
   }
-  function questionBlock(q, index, count, draft) {
+  function questionBlock(q, index, draft) {
     const scales = (index === 0 ? HEADLINE_SCALES : Object.keys(SCALES)).map((s) => [s, scaleLabel(s)]);
     const id = (name) => `cf-q${index}-${name}`;
     return el(
@@ -209,7 +304,7 @@
       el(
         "div",
         { class: "cf-question-head" },
-        el("span", { text: index === 0 ? t("cf_HeadlineQuestion", "Question 1: the headline score") : `${t("cf_Question", "Question")} ${index + 1}` }),
+        el("span", { text: index === 0 ? t("cf_HeadlineQuestion", "Question 1: the Headline Score") : `${t("cf_Question", "Question")} ${index + 1}` }),
         draft && index > 0 ? el("button", {
           class: "ui basic mini button",
           type: "button",
@@ -221,8 +316,8 @@
         "div",
         { class: "fields" },
         field(t("cf_Scale", "Scale"), select(id("scale"), scales, q.scale, { disabled: !draft }), null, "six"),
-        field(t("cf_QuestionPrompt", "Question prompt"), select(id("prompt"), soundOptions(false), q.prompt_id, { disabled: !draft }), null, "six"),
-        field(t("cf_Timeout", "Wait for a key (s)"), numberInput(id("timeout"), q.timeout_seconds, 2, 30, !draft), null, "two"),
+        field(t("cf_QuestionPrompt", "Prompt"), select(id("prompt"), soundOptions(false), q.prompt_id, { disabled: !draft }), null, "six"),
+        field(t("cf_Timeout", "Wait (Seconds)"), numberInput(id("timeout"), q.timeout_seconds, 2, 30, !draft), null, "two"),
         field(t("cf_Retries", "Retries"), numberInput(id("retries"), q.retries, 0, 5, !draft), null, "two")
       ),
       q.scale === "nps11" ? el("div", { class: "cf-note", text: t("cf_NpsHint", 'NPS takes 0\u201310. The prompt must say "press 1 then 0 for 10": a lone 1 counts after 2 seconds.') }) : null
@@ -242,8 +337,7 @@
   function editQuestions(change) {
     const questions = readQuestions();
     change(questions);
-    const list = $id("cf-questions");
-    list.replaceChildren(...questions.map((q, i) => questionBlock(q, i, questions.length, true)));
+    $id("cf-questions").replaceChildren(...questions.map((q, i) => questionBlock(q, i, true)));
     $id("cf-add-question").disabled = questions.length >= 3;
   }
   function renderEditor(data) {
@@ -253,7 +347,6 @@
     const archived = s.status === "archived";
     const result = el("div", { id: "cf-editor-result" });
     const targetKeys = new Set(data.targets.map((tg) => `${tg.direction}:${tg.route_id}`));
-    const problems = problemsBox(data);
     const lockedNote = active ? el("div", { class: "ui info message", text: t("cf_ActiveLocked", "This version is live: its questions and prompts are fixed so results stay comparable. Rules and routes can still change. To change the wording, create a new version.") }) : null;
     const targetList = (direction, heading) => el(
       "div",
@@ -280,7 +373,7 @@
     );
     const form = el(
       "form",
-      { class: "ui form", onsubmit: (e) => {
+      { class: "ui form cf-editor", id: "cf-editor-form", onsubmit: (e) => {
         e.preventDefault();
         saveEditor(result);
       } },
@@ -298,54 +391,71 @@
       ),
       el("h4", { class: "ui dividing header", text: t("cf_SectionPrompts", "Prompts") }),
       el("p", { class: "cf-note", text: t("cf_PromptsHint", "Prompts are sound files from Sound files (Phrase Studio can generate them). Upload them there first.") }),
-      el("div", { class: "three fields" }, PROMPT_FIELDS.map(([name, key, fallback]) => field(t(key, fallback), select(`cf-${name}`, soundOptions(name === "invalid_prompt_id"), s[name], { disabled: !draft })))),
+      el("div", { class: "three fields" }, PROMPT_FIELDS.map(([name, key, fallback, hintKey, hint]) => field(t(key, fallback), select(`cf-${name}`, soundOptions(name === "invalid_prompt_id"), s[name], { disabled: !draft }), t(hintKey, hint)))),
       el("h4", { class: "ui dividing header", text: t("cf_SectionQuestions", "Questions") }),
-      el("div", { id: "cf-questions" }, Object.keys(s.questions).sort().map((pos, i) => questionBlock(s.questions[pos], i, Object.keys(s.questions).length, draft))),
-      draft ? el("button", {
-        class: "ui basic small button",
-        type: "button",
-        id: "cf-add-question",
-        text: t("cf_AddQuestion", "Add a question"),
-        disabled: Object.keys(s.questions).length >= 3,
-        onclick: () => editQuestions((qs) => qs.push({ scale: "yesno", prompt_id: "", timeout_seconds: 6, retries: 2 }))
-      }) : null,
-      el("h4", { class: "ui dividing header", text: t("cf_SectionRules", "Who gets surveyed") }),
-      el("div", { class: "three fields" }, RULE_FIELDS.map(([name, key, fallback, min, max]) => field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, archived)))),
+      el("div", { id: "cf-questions" }, Object.keys(s.questions).sort().map((pos, i) => questionBlock(s.questions[pos], i, draft))),
+      draft ? el(
+        "button",
+        {
+          class: "ui basic small button",
+          type: "button",
+          id: "cf-add-question",
+          disabled: Object.keys(s.questions).length >= 3,
+          onclick: () => editQuestions((qs) => qs.push({ scale: "yesno", prompt_id: "", timeout_seconds: 6, retries: 2 }))
+        },
+        el("i", { class: "plus icon" }),
+        t("cf_AddQuestion", "Add Question")
+      ) : null,
+      el("h4", { class: "ui dividing header", text: t("cf_SectionRules", "Who Gets Surveyed") }),
+      el("div", { class: "three fields" }, RULE_FIELDS.map(([name, key, fallback, min, max, hintKey, hint]) => field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, archived), hintKey ? t(hintKey, hint) : null))),
       hoursFields(s, archived),
       el("p", { class: "cf-note", text: t("cf_RulesHint", "Only calls an agent answered are surveyed, and never at the agent's choice. Excluded numbers and the limit on surveys running at once are under Settings.") }),
-      el("h4", { class: "ui dividing header", text: t("cf_SectionTargets", "Runs on") }),
+      el("h4", { class: "ui dividing header", text: t("cf_SectionTargets", "Runs On") }),
       targetList("in", t("cf_IncomingRoutes", "Incoming routes: the caller is surveyed when the agent hangs up")),
       targetList("out", t("cf_OutgoingRoutes", "Outgoing routes: the customer is surveyed when the agent hangs up")),
-      el("p", { class: "cf-note", text: t("cf_TargetsHint", "Blind-transferred calls and calls the customer ends first are never surveyed.") }),
+      el("p", { class: "cf-note", text: t("cf_TargetsHint", "Blind-transferred calls and calls the customer ends first are never surveyed.") })
+    );
+    const headActions = el(
+      "div",
+      { class: "cf-head-actions" },
+      archived ? null : el("button", { class: "ui primary small button", type: "submit", form: "cf-editor-form", text: t("cf_Save", "Save") }),
+      active ? el("button", {
+        class: "ui basic small button",
+        type: "button",
+        title: t("cf_NewVersionHint", "A new draft with the same settings, to change the questions or prompts"),
+        onclick: () => act("newVersion", s.id, result, true)
+      }, el("i", { class: "code branch icon" }), t("cf_NewVersion", "New Version")) : null,
       el(
-        "div",
-        { class: "cf-editor-actions" },
-        archived ? null : el("button", { class: "ui primary button", type: "submit", text: t("cf_Save", "Save") }),
-        draft ? el("button", {
-          class: "ui positive button",
+        "button",
+        { class: "ui basic small button", type: "button", onclick: () => act("duplicateSurvey", s.id, result, true) },
+        el("i", { class: "copy outline icon" }),
+        t("cf_Duplicate", "Duplicate")
+      ),
+      archived ? null : el(
+        "button",
+        {
+          class: "ui basic small negative button",
           type: "button",
-          id: "cf-activate",
-          text: t("cf_Activate", "Activate"),
-          disabled: data.problems.length > 0,
-          onclick: () => act("activateSurvey", s.id, result)
-        }) : null,
-        active ? el("button", {
-          class: "ui button",
-          type: "button",
-          text: t("cf_NewVersion", "New version to change wording"),
-          onclick: () => act("newVersion", s.id, result, true)
-        }) : null,
-        el("button", { class: "ui basic button", type: "button", text: t("cf_Duplicate", "Duplicate"), onclick: () => act("duplicateSurvey", s.id, result, true) }),
-        archived ? null : el("button", {
-          class: "ui basic negative button",
-          type: "button",
-          text: active ? t("cf_Stop", "Stop (archive)") : t("cf_Archive", "Archive"),
           onclick: () => {
             if (window.confirm(t("cf_ConfirmArchive", "Archive this version? It stops running and can't be edited again. Its results are kept."))) act("archiveSurvey", s.id, result);
           }
-        })
-      ),
-      result
+        },
+        el("i", { class: "archive icon" }),
+        active ? t("cf_Stop", "Stop and Archive") : t("cf_Archive", "Archive")
+      )
+    );
+    const actions = archived ? null : el(
+      "div",
+      { class: "cf-editor-actions" },
+      el("button", { class: "ui primary button", type: "submit", form: "cf-editor-form", text: t("cf_Save", "Save") }),
+      draft ? el("button", {
+        class: "ui positive button",
+        type: "button",
+        id: "cf-activate",
+        disabled: data.problems.length > 0,
+        onclick: () => act("activateSurvey", s.id, result)
+      }, el("i", { class: "play icon" }), t("cf_Activate", "Activate")) : null,
+      draft ? el("span", { class: "cf-actions-hint", id: "cf-activate-hint", text: activateHint(data) }) : null
     );
     return el(
       "div",
@@ -353,19 +463,29 @@
       el(
         "div",
         { class: "cf-editor-head" },
-        el("a", { href: "#", class: "ui basic small button", onclick: (e) => {
-          e.preventDefault();
-          showList();
-        } }, el("i", { class: "arrow left icon" }), t("cf_AllSurveys", "All surveys")),
-        el("h3", { class: "ui header", text: `${s.name} \xB7 v${s.version}` }),
-        statusLabel(s.status)
+        el("a", {
+          href: "#",
+          class: "ui basic small icon button",
+          title: t("cf_AllSurveys", "All Surveys"),
+          "aria-label": t("cf_AllSurveys", "All Surveys"),
+          onclick: (e) => {
+            e.preventDefault();
+            showList();
+          }
+        }, el("i", { class: "arrow left icon" })),
+        el("h3", { class: "ui header", text: `${s.name} \xB7 ${t("cf_VersionShort", "v")}${s.version}` }),
+        statusLabel(s.status),
+        headActions
       ),
-      problems,
+      problemsBox(data),
       lockedNote,
       form,
-      archived ? null : testCallPanel(data)
+      archived ? null : testCallPanel(data),
+      result,
+      actions
     );
   }
+  var activateHint = (data) => data.problems.length ? sub(t("cf_ActivateBlocked", "{n} thing(s) to fix before activating: see the list at the top."), { n: data.problems.length }) : t("cf_ActivateReady", "Ready to go live.");
   function problemsBox(data) {
     if (data.survey.status !== "draft" || data.problems.length === 0) return el("div", { id: "cf-problems" });
     return el(
@@ -376,16 +496,16 @@
     );
   }
   function testCallList(data) {
-    const scales = data.survey.questions;
+    const questions = data.survey.questions;
     return el("table", { class: "ui very basic compact table cf-table", id: "cf-test-calls" }, el(
       "tbody",
       {},
       data.testCalls.length === 0 ? el("tr", {}, el("td", { class: "cf-muted", text: t("cf_NoTestCalls", "No test calls on this version yet.") })) : data.testCalls.map((c) => el(
         "tr",
         {},
-        el("td", { text: dateTime(c.ended_at) }),
+        el("td", { text: shortDateTime(c.ended_at) }),
         el("td", { text: c.caller_num || "" }),
-        el("td", { text: Object.keys(c.answers).length === 0 ? t("cf_NoKeys", "No keys pressed") : Object.keys(c.answers).sort().map((pos) => `${t("cf_Q", "Q")}${pos}: ${answerText(scales[pos], c.answers[pos])}`).join(" \xB7 ") })
+        el("td", { text: Object.keys(c.answers).length === 0 ? t("cf_NoKeys", "No keys pressed") : Object.keys(c.answers).sort().map((pos) => `${t("cf_Q", "Q")}${pos}: ${answerText(questions[pos], c.answers[pos])}`).join(" \xB7 ") })
       ))
     ));
   }
@@ -404,17 +524,19 @@
       if (problems) problems.replaceWith(problemsBox(data));
       const activate = $id("cf-activate");
       if (activate) activate.disabled = data.problems.length > 0;
+      const hint = $id("cf-activate-hint");
+      if (hint) hint.textContent = activateHint(data);
       return data;
     });
   }
   function testCallPanel(data) {
     const s = data.survey;
     const result = el("div");
-    const extensions = state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
+    const extensions = extensionOptions();
     const ring = () => {
       const before = data.testCalls.length ? data.testCalls[0].id : 0;
       post("testCall", { id: s.id, extension: $id("cf-test-extension").value }).then((r) => {
-        message(result, "info", t("cf_TestRinging", "Ringing {ext}. Answer, listen, and press keys as a caller would; the call shows below when it ends.").replace("{ext}", r.ringing));
+        message(result, "info", sub(t("cf_TestRinging", "Ringing {ext}. Answer, listen, and press keys as a caller would; the call shows below when it ends."), { ext: r.ringing }));
         clearInterval(state.testPoll);
         let tries = 0;
         state.testPoll = setInterval(() => {
@@ -430,8 +552,8 @@
     };
     return el(
       "div",
-      {},
-      el("h4", { class: "ui dividing header", text: t("cf_SectionTest", "Test call") }),
+      { class: "cf-editor" },
+      el("h4", { class: "ui dividing header", text: t("cf_SectionTest", "Test Call") }),
       el("p", { class: "cf-note", text: t("cf_TestHint", "Rings an extension and plays this version as a caller would hear it, without the rules. Test calls are kept apart from results.") }),
       el("div", { class: "ui form" }, el(
         "div",
@@ -439,9 +561,15 @@
         field(t("cf_Extension", "Extension"), select("cf-test-extension", extensions, extensions.length ? extensions[0][0] : ""), null, "six"),
         el(
           "div",
-          { class: "four wide field cf-form-buttons" },
-          el("button", { class: "ui button", type: "button", text: t("cf_RingForTest", "Ring for a test"), disabled: extensions.length === 0, onclick: ring }),
-          el("button", { class: "ui basic icon button", type: "button", title: t("cf_Refresh", "Refresh"), onclick: () => refreshTests(s.id) }, el("i", { class: "sync icon" }))
+          { class: "six wide field cf-form-buttons" },
+          el("button", { class: "ui button", type: "button", disabled: extensions.length === 0, onclick: ring }, el("i", { class: "phone icon" }), t("cf_RingForTest", "Place Test Call")),
+          el("button", {
+            class: "ui basic icon button",
+            type: "button",
+            title: t("cf_Refresh", "Refresh"),
+            "aria-label": t("cf_Refresh", "Refresh"),
+            onclick: () => refreshTests(s.id)
+          }, el("i", { class: "sync icon" }))
         )
       )),
       result,
@@ -465,8 +593,13 @@
     return el(
       "div",
       { class: "fields" },
-      el("div", { class: "eight wide field" }, el("label", { text: t("cf_HoursDays", "Survey on these days") }), el("div", { class: "cf-days" }, days)),
-      field(t("cf_HoursStart", "From (empty: all day)"), el("input", { type: "time", id: "cf-hours-start", value: s.hours_start || "", disabled }), null, "four"),
+      el("div", { class: "eight wide field" }, el("label", { text: t("cf_HoursDays", "Days") }), el("div", { class: "cf-days" }, days)),
+      field(
+        t("cf_HoursStart", "From"),
+        el("input", { type: "time", id: "cf-hours-start", value: s.hours_start || "", disabled }),
+        t("cf_HoursStartHint", "Empty: all day."),
+        "four"
+      ),
       field(
         t("cf_HoursEnd", "Until"),
         el("input", { type: "time", id: "cf-hours-end", value: s.hours_end || "", disabled }),
@@ -495,146 +628,235 @@
     const targets = [...document.querySelectorAll("#cf-editor .cf-target:checked")].map((box) => ({ direction: box.dataset.direction, route_id: box.dataset.route }));
     post("saveSurvey", { id: s.id, fields: JSON.stringify(fields) }).then(() => post("saveTargets", { id: s.id, targets: JSON.stringify(targets) })).then(() => openEditor(s.id)).then(
       () => message($id("cf-editor-result"), "positive", t("cf_Saved", "Saved. Calls use the change within a few seconds.")),
-      (xhr) => message(result, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved.")))
+      (xhr) => message(result, "negative", saveFailed(xhr))
     );
   }
   function act(action, id, result, follow = false) {
     post(action, { id }).then((r) => openEditor(follow && r && r.id ? r.id : id)).then(
       () => message($id("cf-editor-result"), "positive", t("cf_Done", "Done.")),
-      (xhr) => message(result, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved.")))
+      (xhr) => message(result, "negative", saveFailed(xhr))
     );
   }
-  var SETTING_FIELDS = [
-    ["csat_detractor_max", "cf_CsatDetractor", "CSAT scores up to this open a follow-up", 1, 4],
-    ["nps_detractor_max", "cf_NpsDetractor", "NPS scores up to this open a follow-up", 0, 9],
-    ["ces_detractor_max", "cf_CesDetractor", "CES scores up to this open a follow-up", 1, 4],
-    ["min_sample", "cf_MinSample", "Responses a group needs before its score is shown", 1, 1e3],
-    ["max_concurrent", "cf_MaxConcurrent", "Surveys running at once, at most", 1, 500]
+  var THRESHOLDS = [
+    ["csat_detractor_max", "cf_CsatDetractor", "CSAT (1\u20135)", 1, 4],
+    ["nps_detractor_max", "cf_NpsDetractor", "NPS (0\u201310)", 0, 9],
+    ["ces_detractor_max", "cf_CesDetractor", "CES (1\u20135)", 1, 4]
   ];
+  var LIMIT_FIELDS = [
+    ["min_sample", "cf_MinSample", "Minimum Responses for a Score", 1, 1e3, "cf_MinSampleHint", "Scores of smaller groups are shown as \u2014, since they swing too much to mean anything."],
+    ["max_concurrent", "cf_MaxConcurrent", "Surveys at Once (Max)", 1, 500, "cf_MaxConcurrentHint", "Calls over the limit aren't surveyed, so surveys can't tie up trunk channels."]
+  ];
+  function retentionText(days) {
+    if (days % 30 === 0 && days >= 60) return sub(t("cf_Months", "{n} months"), { n: Math.round(days / 30) });
+    return sub(t("cf_DaysN", "{n} days"), { n: days });
+  }
+  var settingsSection = (title, hint, ...content) => el(
+    "div",
+    { class: "cf-settings-section" },
+    el("h4", { class: "ui header", text: title }),
+    hint ? el("p", { class: "cf-note", text: hint }) : null,
+    content
+  );
   function loadSettings() {
     return get("settings").then((data) => {
-      const result = el("div");
-      const exclusionsResult = el("div");
       const s = data.settings;
+      const result = el("div");
+      const save = el("button", { class: "ui primary button", type: "submit", disabled: true, text: t("cf_Save", "Save") });
+      const thresholds = THRESHOLDS.map(([name, key, fallback, low, high]) => field(
+        t(key, fallback),
+        select(`cf-${name}`, Array.from({ length: high - low + 1 }, (_, i) => low + i).map((v) => [v, v === low ? String(v) : `${low}\u2013${v}`]), s[name], { class: "ui dropdown" }),
+        null,
+        "four"
+      ));
+      const mailLink = el("a", { href: `${globalRootUrl}mail-settings/modify`, text: t("cf_MailSettingsLink", "Mail settings") });
       const form = el(
         "form",
-        { class: "ui form", onsubmit: (e) => {
-          e.preventDefault();
-          const settings = {
-            alert_emails: $id("cf-alert-emails").value,
-            callback_prefixes: $id("cf-callback-prefixes").value,
-            summary: $id("cf-summary").value
-          };
-          SETTING_FIELDS.forEach(([name]) => {
-            settings[name] = $id(`cf-${name}`).value;
-          });
-          post("saveSettings", { settings: JSON.stringify(settings) }).then(
-            () => message(result, "positive", t("cf_Saved", "Saved. Calls use the change within a few seconds.")),
-            (xhr) => message(result, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved.")))
-          );
-        } },
-        el("h4", { class: "ui dividing header", text: t("cf_SectionAlerts", "Detractor alerts") }),
-        data.mailEnabled ? null : el("div", { class: "ui warning message", text: t("cf_MailOff", "Email notifications are off in the PBX's mail settings, so no alerts are sent. Follow-ups are still listed.") }),
-        field(
-          t("cf_AlertEmails", "Send alerts to"),
-          el("textarea", { id: "cf-alert-emails", rows: "2", text: s.alert_emails.join("\n") }),
-          t("cf_AlertEmailsHint", "One address per line, up to 10. Alerts carry a link to the follow-up, not the caller's number.")
+        {
+          class: "ui form",
+          id: "cf-settings-form",
+          onsubmit: (e) => {
+            e.preventDefault();
+            const settings = {
+              alert_emails: $id("cf-alert-emails").value,
+              callback_prefixes: $id("cf-callback-prefixes").value,
+              summary: $id("cf-summary").value
+            };
+            [...THRESHOLDS, ...LIMIT_FIELDS].forEach(([name]) => {
+              settings[name] = $id(`cf-${name}`).value;
+            });
+            save.disabled = true;
+            post("saveSettings", { settings: JSON.stringify(settings) }).then(
+              () => message(result, "positive", t("cf_Saved", "Saved. Calls use the change within a few seconds.")),
+              (xhr) => {
+                save.disabled = false;
+                message(result, "negative", saveFailed(xhr));
+              }
+            );
+          },
+          // Save stays off until something changes, so it's clear whether there is anything to save.
+          oninput: () => {
+            save.disabled = false;
+            result.replaceChildren();
+          },
+          onchange: () => {
+            save.disabled = false;
+            result.replaceChildren();
+          }
+        },
+        settingsSection(
+          t("cf_SectionFollowUps", "Follow-Ups"),
+          t("cf_ThresholdsHint", "A headline score in these ranges opens a follow-up and sends an alert. Defaults: CSAT 1\u20132, NPS 0\u20136, CES 1\u20132."),
+          el("div", { class: "fields" }, thresholds)
         ),
-        field(
-          t("cf_Summary", "Summary email to the same addresses"),
-          select("cf-summary", [
-            ["off", t("cf_SummaryOff", "Off")],
-            ["daily", t("cf_SummaryDaily", "Daily, for the day before")],
-            ["weekly", t("cf_SummaryWeekly", "Weekly on Monday, for the last 7 days")]
-          ], s.summary),
-          t("cf_SummaryHint", "Sent after 08:00 PBX time: each active survey's score and responses, and the follow-ups still open.")
+        settingsSection(
+          t("cf_SectionEmails", "Emails"),
+          null,
+          data.mailEnabled ? null : el(
+            "div",
+            { class: "ui warning message" },
+            t("cf_MailOff", "Email notifications are off in the PBX's mail settings, so no emails are sent. Follow-ups are still listed."),
+            " ",
+            mailLink
+          ),
+          el(
+            "div",
+            { class: "fields" },
+            field(
+              t("cf_AlertEmails", "Alert Recipients"),
+              el("textarea", { id: "cf-alert-emails", rows: "3", text: s.alert_emails.join("\n") }),
+              t("cf_AlertEmailsHint", "One address per line, up to 10. Alerts link to the follow-up and never include the caller's number."),
+              "eight"
+            ),
+            field(
+              t("cf_Summary", "Summary Email"),
+              select("cf-summary", [
+                ["off", t("cf_SummaryOff", "Off")],
+                ["daily", t("cf_SummaryDaily", "Daily, for the Day Before")],
+                ["weekly", t("cf_SummaryWeekly", "Weekly on Monday, for the Last 7 Days")]
+              ], s.summary, { class: "ui dropdown" }),
+              t("cf_SummaryHint", "To the alert recipients, after 08:00 PBX time: each active survey's score and responses, and the follow-ups still open."),
+              "eight"
+            )
+          )
         ),
-        field(
-          t("cf_CallBackPrefixes", "Numbers that can be called back in one click start with"),
-          el("input", { type: "text", id: "cf-callback-prefixes", value: s.callback_prefixes.join(" ") }),
-          t("cf_CallBackPrefixesHint", "Digit prefixes of your own country's ordinary numbers, separated by spaces (for example 7495 8495). Any other number must be typed in before it is called back, so a faked international or premium-rate number can't be called by mistake. Empty: every call-back must be typed.")
+        settingsSection(
+          t("cf_SectionCallBacks", "Call-Backs"),
+          null,
+          el("div", { class: "fields" }, field(
+            t("cf_CallBackPrefixes", "One-Click Prefixes"),
+            el("input", { type: "text", id: "cf-callback-prefixes", value: s.callback_prefixes.join(" "), autocomplete: "off" }),
+            t("cf_CallBackPrefixesHint", "Numbers starting with these digits are called back in one click; separate prefixes with spaces, for example 7495 8495. Any other number must be typed in first, so a faked international or premium-rate number can't be called by mistake. Empty: every number must be typed."),
+            "eight"
+          ))
         ),
-        el("div", { class: "three fields" }, SETTING_FIELDS.slice(0, 3).map(([name, key, fallback, min, max]) => field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, false)))),
-        el("h4", { class: "ui dividing header", text: t("cf_SectionLimits", "Results and limits") }),
-        el("div", { class: "two fields" }, SETTING_FIELDS.slice(3).map(([name, key, fallback, min, max]) => field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, false)))),
-        el("button", { class: "ui primary button", type: "submit", text: t("cf_Save", "Save") }),
-        result
+        settingsSection(
+          t("cf_SectionLimits", "Results and Limits"),
+          null,
+          el("div", { class: "fields" }, LIMIT_FIELDS.map(([name, key, fallback, min, max, hintKey, hint]) => field(t(key, fallback), numberInput(`cf-${name}`, s[name], min, max, false), t(hintKey, hint), "eight")))
+        ),
+        el("div", { class: "cf-settings-save" }, save, result)
       );
-      const exclusions = el(
-        "div",
-        {},
-        el("h4", { class: "ui dividing header", text: t("cf_SectionExclusions", "Excluded numbers") }),
-        el("p", { class: "cf-note", text: t("cf_ExclusionsHint", "These numbers are never surveyed. Only digits are kept.") }),
+      const exclusionsResult = el("div");
+      const exclusions = settingsSection(
+        data.exclusions.length ? sub(t("cf_SectionExclusionsN", "Excluded Numbers ({n})"), { n: count(data.exclusions.length) }) : t("cf_SectionExclusions", "Excluded Numbers"),
+        t("cf_ExclusionsHint", "Calls from these numbers are never surveyed. Only digits are kept. Changes apply at once."),
         el(
           "form",
           { class: "ui form", onsubmit: (e) => {
             e.preventDefault();
-            post("addExclusions", { numbers: $id("cf-excl-numbers").value, note: $id("cf-excl-note").value }).then(() => loadSettings(), (xhr) => message(exclusionsResult, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved."))));
+            post("addExclusions", { numbers: $id("cf-excl-numbers").value, note: $id("cf-excl-note").value }).then(() => loadSettings(), (xhr) => message(exclusionsResult, "negative", saveFailed(xhr)));
           } },
           el(
             "div",
             { class: "fields" },
-            field(t("cf_Numbers", "Numbers, one per line"), el("textarea", { id: "cf-excl-numbers", rows: "2" }), null, "eight"),
-            field(t("cf_Note", "Note"), el("input", { type: "text", id: "cf-excl-note", maxlength: "200" }), null, "six"),
-            el("div", { class: "two wide field cf-form-buttons" }, el("button", { class: "ui button", type: "submit", text: t("cf_Add", "Add") }))
+            field(t("cf_Numbers", "Numbers (One per Line)"), el("textarea", { id: "cf-excl-numbers", rows: "2" }), null, "seven"),
+            field(t("cf_Note", "Note"), el("input", { type: "text", id: "cf-excl-note", maxlength: "200", placeholder: t("cf_NoteOptional", "Optional") }), null, "six"),
+            el("div", { class: "three wide field cf-form-buttons" }, el("button", { class: "ui button", type: "submit" }, el("i", { class: "plus icon" }), t("cf_Add", "Add")))
           )
         ),
         exclusionsResult,
-        el("div", { class: "cf-exclusions" }, el("table", { class: "ui very basic compact table cf-table" }, el(
-          "tbody",
-          {},
-          data.exclusions.length === 0 ? el("tr", {}, el("td", { class: "cf-muted", text: t("cf_NoExclusions", "No excluded numbers.") })) : data.exclusions.map((x) => el(
+        data.exclusions.length === 0 ? el("p", { class: "cf-muted", text: t("cf_NoExclusions", "No excluded numbers.") }) : el("div", { class: "cf-exclusions" }, el(
+          "table",
+          { class: "ui very basic compact table cf-table" },
+          el("thead", {}, el(
+            "tr",
+            {},
+            el("th", { text: t("cf_Number", "Number") }),
+            el("th", { text: t("cf_Note", "Note") }),
+            el("th", { text: t("cf_Added", "Added") }),
+            el("th")
+          )),
+          el("tbody", {}, data.exclusions.map((x) => el(
             "tr",
             {},
             el("td", { text: x.number }),
             el("td", { class: "cf-muted", text: x.note || "" }),
+            el("td", { class: "cf-muted cf-nowrap", text: x.created_at ? new Date(x.created_at * 1e3).toLocaleDateString() : "" }),
             el("td", { class: "cf-num" }, el("button", {
               class: "ui basic mini button",
               type: "button",
               text: t("cf_Remove", "Remove"),
               onclick: () => post("removeExclusion", { id: x.id }).then(
                 () => loadSettings(),
-                (xhr) => message(exclusionsResult, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved.")))
+                (xhr) => message(exclusionsResult, "negative", saveFailed(xhr))
               )
             }))
-          ))
-        )))
+          )))
+        ))
       );
       const forgetResult = el("div");
-      const privacy = el(
-        "div",
-        {},
-        el("h4", { class: "ui dividing header", text: t("cf_SectionPrivacy", "Privacy") }),
-        el("p", { class: "cf-note", text: t("cf_RetentionHint", `Callers' numbers are kept as long as the PBX keeps its call history, then removed; scores stay. The same limit applies to the "don't ask again" memory.`) }),
+      const unlimited = data.retentionDays < data.retentionUnlimitedBelow;
+      const storageLink = el("a", { href: `${globalRootUrl}storage/index`, text: t("cf_StorageLink", "Storage") });
+      const privacy = settingsSection(
+        t("cf_SectionPrivacy", "Privacy"),
+        null,
+        el(
+          "p",
+          { class: "cf-note" },
+          unlimited ? t("cf_RetentionUnlimited", "The PBX keeps its call history without a time limit, so callers' numbers are kept too.") : sub(t("cf_RetentionHint", `The PBX keeps its call history for {period}. Callers' numbers are removed from survey results after that, and so is the "don't ask again" memory; scores stay.`), { period: retentionText(data.retentionDays) }),
+          " ",
+          t("cf_RetentionWhere", "The period is set under"),
+          " ",
+          storageLink,
+          "."
+        ),
         el(
           "form",
           { class: "ui form", onsubmit: (e) => {
             e.preventDefault();
             const number = $id("cf-forget-number").value.trim();
-            if (!number || !window.confirm(t("cf_ConfirmForget", "Delete every survey answer and follow-up for {number}? This can't be undone.").replace("{number}", number))) return;
+            if (!number || !window.confirm(sub(t("cf_ConfirmForget", "Delete every survey answer and follow-up for {number}? This can't be undone."), { number }))) return;
             post("forgetNumber", { number }).then(
               (r) => {
                 $id("cf-forget-number").value = "";
-                message(forgetResult, "positive", t("cf_Forgotten", "Deleted {n} survey session(s) for that number.").replace("{n}", r.sessions));
+                message(forgetResult, "positive", sub(t("cf_Forgotten", "Deleted {n} survey session(s) for that number."), { n: r.sessions }));
               },
-              (xhr) => message(forgetResult, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved.")))
+              (xhr) => message(forgetResult, "negative", saveFailed(xhr))
             );
           } },
           el(
             "div",
             { class: "fields" },
-            field(t("cf_ForgetNumber", "Delete all data for a number"), el("input", { type: "text", id: "cf-forget-number", maxlength: "40" }), null, "eight"),
-            el("div", { class: "four wide field cf-form-buttons" }, el("button", { class: "ui basic negative button", type: "submit", text: t("cf_Delete", "Delete") }))
-          )
+            field(t("cf_ForgetNumber", "Delete All Data for a Number"), el("input", { type: "text", id: "cf-forget-number", maxlength: "40", autocomplete: "off" }), null, "eight"),
+            el("div", { class: "four wide field cf-form-buttons" }, el(
+              "button",
+              { class: "ui basic negative button", type: "submit" },
+              el("i", { class: "trash alternate outline icon" }),
+              t("cf_Delete", "Delete")
+            ))
+          ),
+          el("p", { class: "cf-note", text: t("cf_ForgetHint", "Removes the number's survey answers and follow-ups at once, for example when a caller asks.") })
         ),
         forgetResult
       );
-      $id("cf-settings").replaceChildren(form, exclusions, privacy);
+      $id("cf-settings").replaceChildren(form, el("div", { class: "ui divider cf-settings-divider" }), exclusions, privacy);
+      $("#cf-settings .ui.dropdown").dropdown();
     });
   }
   var esc = (v) => echarts.format.encodeHTML(String(v));
   var isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  var fmt = (v, unit = "") => v === null || v === void 0 ? "\u2014" : `${Number(v).toLocaleString()}${unit}`;
+  var pct = (v) => v === null || v === void 0 ? "\u2014" : `${Math.round(v)}%`;
+  var avg = (v) => v === null || v === void 0 ? "\u2014" : Number(v).toLocaleString(void 0, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   function applyPreset() {
     const preset = $id("cf-preset").value;
     if (preset === "custom") return;
@@ -648,8 +870,11 @@
     return { survey: $id("cf-version").value, from: $id("cf-from").value, to: $id("cf-to").value, direction: $id("cf-direction").value, ...extra };
   }
   function chart(id) {
-    if (!state.charts[id]) state.charts[id] = echarts.init($id(id), null, { renderer: "canvas" });
+    if (!state.charts[id]) state.charts[id] = echarts.init($id(id), "call-feedback", { renderer: "canvas" });
     return state.charts[id];
+  }
+  function showChartMessage(c, text) {
+    c.setOption({ title: { text, left: "center", top: "middle" }, series: [], xAxis: [], yAxis: [], legend: [] }, true);
   }
   function nameOf(kind, key) {
     if (key === "" || key === null || key === void 0) return t("cf_Unknown", "Unknown");
@@ -665,79 +890,110 @@
     const bounds = BUCKETS[kind];
     const next = bounds[bounds.indexOf(from) + 1];
     const span = (sec) => sec < 60 ? `${sec} s` : `${sec / 60} min`;
-    if (next === void 0) return t("cf_OrMore", "{from} or more").replace("{from}", span(from));
+    if (next === void 0) return sub(t("cf_OrMore", "{from} or more"), { from: span(from) });
     const sameUnit = from < 60 === next < 60;
     return sameUnit ? `${span(from).split(" ")[0]}\u2013${span(next)}` : `${span(from)}\u2013${span(next)}`;
   }
-  function metricName(scale) {
-    return METRICS[scale] ? label(METRICS[scale]) : scale;
-  }
+  var metricName = (scale) => METRICS[scale] ? label(METRICS[scale]) : scale;
   function scoreText(scale, value) {
     if (value === null || value === void 0) return "\u2014";
-    const unit = METRICS[scale] ? METRICS[scale][2] : "";
-    return scale === "nps11" ? `${value > 0 ? "+" : ""}${value}` : `${value}${unit}`;
+    const n = Math.round(value);
+    return scale === "nps11" ? `${n > 0 ? "+" : ""}${n}` : `${n}${METRICS[scale] ? METRICS[scale][2] : ""}`;
   }
-  function kpi(labelText, value, sub, change) {
+  var scorePosition = (scale, value) => scale === "nps11" ? (value + 100) / 2 : value;
+  function kpi(labelText, value, subText, change, onClick) {
     return el(
       "div",
-      { class: "cf-kpi" },
+      {
+        class: `cf-kpi${onClick ? " cf-clickable" : ""}`,
+        onclick: onClick,
+        role: onClick ? "button" : null,
+        tabindex: onClick ? "0" : null,
+        onkeydown: onClick ? (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        } : null
+      },
       el("div", { class: "cf-kpi-label", text: labelText }),
       el("div", { class: `cf-kpi-value${value === "\u2014" ? " cf-empty" : ""}`, text: value }),
-      sub ? el("div", { class: "cf-kpi-sub", text: sub }) : null,
+      subText ? el("div", { class: "cf-kpi-sub", text: subText }) : null,
       change
     );
   }
   function changeLine(cur, prev, unitText) {
     if (cur === null || prev === null || cur === void 0 || prev === void 0) {
-      return el("div", { class: "cf-kpi-sub", text: t("cf_NoPrevious", "No responses in the previous period") });
+      return el("div", { class: "cf-change", text: t("cf_NoPrevious", "No score for the previous period") });
     }
-    const delta = Math.round((cur - prev) * 10) / 10;
-    if (delta === 0) return el("div", { class: "cf-kpi-sub", text: t("cf_NoChange", "No change vs previous period") });
-    return el("div", { class: `cf-kpi-sub cf-change ${delta > 0 ? "good" : "bad"}`, text: `${delta > 0 ? "\u25B2" : "\u25BC"} ${Math.abs(delta)}${unitText} ${t("cf_VsPrevious", "vs previous period")}` });
+    const delta = Math.round(cur) - Math.round(prev);
+    if (delta === 0) return el("div", { class: "cf-change", text: t("cf_NoChange", "No change vs previous period") });
+    return el(
+      "div",
+      { class: `cf-change ${delta > 0 ? "good" : "bad"}` },
+      el("span", { class: "cf-change-value", text: `${delta > 0 ? "\u25B2" : "\u25BC"} ${Math.abs(delta)}${unitText}` }),
+      ` ${t("cf_VsPrevious", "vs previous period")}`
+    );
   }
   function noVersions() {
     return el("div", { class: "ui info message", text: t("cf_NoResultsYet", "Results appear here once a survey has been activated and callers have answered it.") });
   }
+  function toggleResults(boxId, notesId, has) {
+    $id(boxId).classList.toggle("cf-hidden", !has);
+    if (!has) $id(notesId).replaceChildren(noVersions());
+    return has;
+  }
   function loadOverview() {
     const box = $id("cf-overview");
-    if (!state.versions.length) {
-      box.replaceChildren(noVersions());
+    if (!toggleResults("cf-overview-charts", "cf-overview-notes", state.versions.length > 0)) {
+      box.replaceChildren();
       return;
     }
     get("overview", resultsQuery()).then((o) => {
       const scale = o.survey.scale;
       const small = o.score.responses < o.min_sample;
-      const scoreSub = small ? t("cf_NotEnough", "Not enough responses yet ({n} of {min})").replace("{n}", o.score.responses).replace("{min}", o.min_sample) : `${o.score.responses.toLocaleString()} ${t("cf_Responses", "responses")}`;
+      const scoreSub = small ? sub(t("cf_NotEnough", "Not enough responses yet ({n} of {min})"), { n: o.score.responses, min: o.min_sample }) : sub(t("cf_ScoreSub", "{n} responses \xB7 average {avg}"), { n: count(o.score.responses), avg: avg(o.score.average) });
+      const previous = o.previous.score.responses >= o.min_sample ? o.previous.score.score : null;
+      const followUps = o.followups.open + o.followups.contacted + o.followups.resolved;
       const tiles = [
         kpi(
           metricName(scale),
           small ? "\u2014" : scoreText(scale, o.score.score),
           scoreSub,
-          small ? null : changeLine(o.score.score, o.previous.score.responses >= o.min_sample ? o.previous.score.score : null, scale === "nps11" ? "" : ` ${t("cf_Points", "pts")}`)
-        ),
-        kpi(t("cf_Average", "Average"), small ? "\u2014" : fmt(o.score.average), `${t("cf_Scale", "Scale")}: ${scale === "nps11" ? "0\u201310" : "1\u20135"}`),
-        kpi(
-          t("cf_ResponseRate", "Response rate"),
-          fmt(o.response_rate, "%"),
-          t("cf_ResponseRateSub", "{started} of {offered} offered pressed a key").replace("{started}", o.started).replace("{offered}", o.offered)
+          small ? null : changeLine(o.score.score, previous, ` ${t("cf_Points", "pts")}`)
         ),
         kpi(
-          t("cf_CompletionRate", "Completion rate"),
-          fmt(o.completion_rate, "%"),
-          t("cf_CompletionRateSub", "{completed} answered every question").replace("{completed}", o.completed)
+          t("cf_ResponseRate", "Response Rate"),
+          pct(o.response_rate),
+          sub(t("cf_ResponseRateSub", "{started} of {offered} offered pressed a key"), { started: count(o.started), offered: count(o.offered) })
         ),
         o.resolution ? kpi(
-          t("cf_Resolved", "Issue resolved"),
-          o.resolution.responses ? fmt(o.resolution.score, "%") : "\u2014",
-          `${o.resolution.responses.toLocaleString()} ${t("cf_Responses", "responses")}`
-        ) : kpi(t("cf_Excluded", "Left out"), fmt(o.excluded), t("cf_ExcludedSub", "calls the CDR shows were under the minimum talk time"))
+          t("cf_Resolved", "Issue Resolved"),
+          o.resolution.responses >= o.min_sample ? pct(o.resolution.score) : "\u2014",
+          sub(t("cf_ResolvedSub", "{n} answered the yes/no question"), { n: count(o.resolution.responses) })
+        ) : kpi(
+          t("cf_CompletionRate", "Completion Rate"),
+          pct(o.completion_rate),
+          sub(t("cf_CompletionRateSub", "{completed} answered every question"), { completed: count(o.completed) })
+        ),
+        kpi(
+          t("cf_OpenFollowUps", "Open Follow-Ups"),
+          count(o.followups.open),
+          followUps ? sub(t("cf_OpenFollowUpsSub", "{n} opened in this period"), { n: count(followUps) }) : t("cf_NoFollowUpsShort", "None in this period"),
+          null,
+          () => {
+            state.followStatus = "open";
+            selectTab("followups");
+          }
+        )
       ];
       box.replaceChildren(el("div", { class: "cf-kpis" }, tiles));
       renderTrend(o);
       renderDistribution(o);
-      const skipped = Object.entries(o.skipped).filter(([, n]) => n > 0).map(([reason, n]) => `${n.toLocaleString()} ${SKIP_REASONS[reason] ? label(SKIP_REASONS[reason]) : reason}`);
+      const skipped = Object.entries(o.skipped).filter(([, n]) => n > 0).map(([reason, n]) => `${(SKIP_REASONS[reason] ? label(SKIP_REASONS[reason]) : reason).toLowerCase()} ${count(n)}`);
       fill(
         $id("cf-overview-notes"),
+        o.resolution ? el("p", { class: "cf-note", text: sub(t("cf_CompletionNote", "Completion rate: {rate} of callers who pressed a key answered every question."), { rate: pct(o.completion_rate) }) }) : null,
         skipped.length ? el("p", { class: "cf-note", text: `${t("cf_NotAsked", "Not asked in this period:")} ${skipped.join(", ")}.` }) : null,
         el("p", { class: "cf-note", text: t("cf_PatientCallers", "Callers who hang up first and blind-transferred calls are never surveyed, so scores lean towards callers who stayed on the line.") }),
         scale === "nps11" ? el("p", { class: "cf-trademark", text: t("cf_NpsTrademark", "Net Promoter, NPS and Net Promoter Score are registered trademarks of Bain & Company, Inc., Satmetrix Systems, Inc. and Fred Reichheld.") }) : null
@@ -747,145 +1003,240 @@
   function renderTrend(o) {
     const points = o.trend.points;
     const scale = o.survey.scale;
-    chart("cf-chart-trend").setOption({
-      grid: { left: 48, right: 48, top: 30, bottom: 30 },
-      legend: { data: [metricName(scale), t("cf_Responses", "responses")], top: 0 },
+    const weekly = o.trend.interval === "week";
+    $id("cf-trend-interval").textContent = weekly ? t("cf_ByWeek", "by week") : t("cf_ByDay", "by day");
+    const c = chart("cf-chart-trend");
+    if (!points.some((p) => p.responses > 0)) {
+      showChartMessage(c, t("cf_NoResponses", "No responses in this period."));
+      return;
+    }
+    const period = (p) => weekly ? sub(t("cf_WeekOf", "Week of {date}"), { date: shortDate(p.period) }) : shortDate(p.period);
+    const responses = t("cf_ResponsesTitle", "Responses");
+    c.setOption({
+      grid: { left: 48, right: 48, top: 36, bottom: 28 },
+      legend: { data: [metricName(scale), responses], top: 0, right: 0, icon: "roundRect", itemWidth: 12, itemHeight: 8 },
       tooltip: {
         trigger: "axis",
         formatter: (params) => {
           const p = points[params[0].dataIndex];
           const score = p.low_sample ? t("cf_TooFew", "too few responses") : scoreText(scale, p.score);
-          return `${esc(p.period)}<br>${esc(metricName(scale))}: ${esc(score)}<br>${esc(t("cf_Responses", "responses"))}: ${esc(p.responses)}`;
+          return `${esc(period(p))}<br>${esc(metricName(scale))}: <b>${esc(score)}</b><br>${esc(responses)}: ${esc(count(p.responses))}`;
         }
       },
-      xAxis: { type: "category", data: points.map((p) => p.period) },
+      xAxis: { type: "category", data: points.map((p) => shortDate(p.period)) },
       yAxis: [
-        { type: "value", name: metricName(scale), min: scale === "nps11" ? -100 : 0, max: 100 },
-        { type: "value", name: t("cf_Responses", "responses"), minInterval: 1, splitLine: { show: false } }
+        { type: "value", min: scale === "nps11" ? -100 : 0, max: 100, axisLabel: { formatter: scale === "nps11" ? "{value}" : "{value}%" } },
+        { type: "value", minInterval: 1, splitLine: { show: false } }
       ],
       series: [
-        { name: t("cf_Responses", "responses"), type: "bar", yAxisIndex: 1, data: points.map((p) => p.responses), itemStyle: { color: "#e4e7eb" } },
+        {
+          name: responses,
+          type: "bar",
+          yAxisIndex: 1,
+          barMaxWidth: 28,
+          data: points.map((p) => p.responses),
+          itemStyle: { color: PALETTE.volume, borderRadius: [2, 2, 0, 0] }
+        },
         {
           name: metricName(scale),
           type: "line",
-          connectNulls: false,
+          connectNulls: true,
+          symbol: "circle",
           symbolSize: 7,
-          lineStyle: { color: BLUE },
-          itemStyle: { color: BLUE },
-          data: points.map((p) => ({ value: p.score, itemStyle: { color: p.low_sample ? GREY : BLUE } }))
+          z: 3,
+          lineStyle: { color: PALETTE.primary, width: 2 },
+          itemStyle: { color: PALETTE.primary },
+          // Points from too few responses are hollow grey: shown, but not to be trusted.
+          data: points.map((p) => ({
+            value: p.responses ? p.score : null,
+            symbol: p.low_sample ? "emptyCircle" : "circle",
+            itemStyle: { color: p.low_sample ? PALETTE.lowSample : PALETTE.primary }
+          }))
         }
       ]
     }, true);
   }
   function renderDistribution(o) {
     const scale = o.survey.scale;
-    const keys = Object.keys(o.score.distribution).map(Number).sort((a, b) => a - b);
+    const c = chart("cf-chart-distribution");
+    const values = scale === "nps11" ? [...Array(11).keys()] : [1, 2, 3, 4, 5];
+    if (!o.score.responses) {
+      showChartMessage(c, t("cf_NoResponses", "No responses in this period."));
+      return;
+    }
     const color = (v) => {
-      if (scale === "nps11") return v <= 6 ? RED : v <= 8 ? AMBER : GREEN;
-      return v <= 2 ? RED : v === 3 ? AMBER : GREEN;
+      if (scale === "nps11") return v <= 6 ? PALETTE.bad : v <= 8 ? PALETTE.neutral : PALETTE.good;
+      return v <= 2 ? PALETTE.bad : v === 3 ? PALETTE.neutral : PALETTE.good;
     };
-    chart("cf-chart-distribution").setOption({
-      grid: { left: 48, right: 20, top: 10, bottom: 30 },
-      tooltip: { trigger: "axis", formatter: (p) => `${esc(p[0].name)}: ${esc(p[0].value)}` },
-      xAxis: { type: "category", data: keys.map(String) },
+    const total = o.score.responses;
+    const share = (n) => `${Math.round(100 * n / total)}%`;
+    c.setOption({
+      grid: { left: 40, right: 16, top: 24, bottom: 28 },
+      tooltip: { trigger: "axis", formatter: (p) => `${esc(t("cf_Answer", "Answer"))} ${esc(p[0].name)}: <b>${esc(count(p[0].value))}</b> (${esc(share(p[0].value))})` },
+      xAxis: { type: "category", data: values.map(String) },
       yAxis: { type: "value", minInterval: 1 },
-      series: [{ type: "bar", data: keys.map((k) => ({ value: o.score.distribution[k], itemStyle: { color: color(k) } })) }]
+      series: [{
+        type: "bar",
+        barMaxWidth: 48,
+        label: { show: true, position: "top", color: G[6], formatter: (p) => p.value ? share(p.value) : "" },
+        data: values.map((k) => ({ value: o.score.distribution[k] || 0, itemStyle: { color: color(k), borderRadius: [2, 2, 0, 0] } }))
+      }]
     }, true);
+  }
+  function barCell(percent, color) {
+    const bar = el("span", { class: "cf-bar" });
+    bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    if (color) bar.style.background = color;
+    return el("td", { class: "cf-bar-cell" }, bar);
   }
   function loadBreakdown() {
     const table = $id("cf-breakdown-table");
-    if (!state.versions.length) {
-      table.replaceChildren();
-      $id("cf-breakdown-notes").replaceChildren(noVersions());
-      return;
-    }
+    if (!toggleResults("cf-breakdown-box", "cf-breakdown-notes", state.versions.length > 0)) return;
     const kind = $id("cf-breakdown").value;
+    const group = $id("cf-breakdown").selectedOptions[0].textContent;
+    $id("cf-breakdown-title").textContent = sub(t("cf_ScoreBy", "Score by {group}"), { group });
     get("breakdown", resultsQuery({ breakdown: kind })).then((b) => {
-      const max = Math.max(1, ...b.rows.map((r) => r.responses));
       const head = el("thead", {}, el(
         "tr",
         {},
-        el("th", { text: $id("cf-breakdown").selectedOptions[0].textContent }),
+        el("th", { text: group }),
         el("th", { class: "cf-num", text: metricName(b.scale) }),
         el("th", { class: "cf-num", text: t("cf_Average", "Average") }),
-        el("th", { class: "cf-num", text: t("cf_Responses", "responses") }),
+        el("th", { class: "cf-num", text: t("cf_ResponsesTitle", "Responses") }),
         el("th", { class: "cf-bar-cell" })
       ));
-      const body = el("tbody", {}, b.rows.length === 0 ? el("tr", {}, el("td", { colspan: "5", class: "cf-muted", text: t("cf_NoResponses", "No responses in this period.") })) : b.rows.map((r) => {
-        const bar = el("div", { class: "cf-bar" });
-        bar.style.width = `${Math.round(100 * r.responses / max)}%`;
-        return el(
-          "tr",
-          { class: r.low_sample ? "cf-low-sample" : "", title: r.low_sample ? t("cf_TooFew", "too few responses") : "" },
-          el("td", { text: nameOf(kind, r.key) }),
-          el("td", { class: "cf-num", text: r.low_sample ? "\u2014" : scoreText(b.scale, r.score) }),
-          el("td", { class: "cf-num", text: r.low_sample ? "\u2014" : fmt(r.average) }),
-          el("td", { class: "cf-num", text: r.responses.toLocaleString() }),
-          el("td", { class: "cf-bar-cell" }, bar)
-        );
-      }));
+      const body = el("tbody", {}, b.rows.length === 0 ? el("tr", {}, el("td", { colspan: "5", class: "cf-empty-cell", text: t("cf_NoResponses", "No responses in this period.") })) : b.rows.map((r) => el(
+        "tr",
+        { class: r.low_sample ? "cf-low-sample" : "", title: r.low_sample ? t("cf_TooFew", "too few responses") : null },
+        el("td", { text: nameOf(kind, r.key) }),
+        el("td", { class: "cf-num", text: r.low_sample ? "\u2014" : scoreText(b.scale, r.score) }),
+        el("td", { class: "cf-num", text: r.low_sample ? "\u2014" : avg(r.average) }),
+        el("td", { class: "cf-num", text: count(r.responses) }),
+        r.low_sample ? el("td", { class: "cf-bar-cell" }) : barCell(scorePosition(b.scale, r.score))
+      )));
       table.replaceChildren(head, body);
       $id("cf-breakdown-notes").replaceChildren(el("p", {
         class: "cf-note",
-        text: t("cf_LowSampleNote", "Groups with fewer than {min} responses are greyed out: their score would swing too much to mean anything.").replace("{min}", b.min_sample)
+        text: sub(t("cf_LowSampleNote", "Groups with fewer than {min} responses are greyed out: their score would swing too much to mean anything."), { min: b.min_sample })
       }));
     });
   }
-  var HEALTH_STEPS = { offered: ["cf_StepOffered", "Offered the survey"], completed: ["cf_StepCompleted", "Answered every question"] };
-  function loadHealth() {
-    const table = $id("cf-health-table");
-    if (!state.versions.length) {
-      table.replaceChildren();
-      $id("cf-health-notes").replaceChildren(noVersions());
+  var questionName = (position, scale) => sub(
+    t("cf_QuestionNScale", "Question {n} ({scale})"),
+    { n: position, scale: scale === "yesno" ? t("cf_MetricYesNo", "yes/no") : metricName(scale) }
+  );
+  function renderProgress(h, worst) {
+    const c = chart("cf-chart-progress");
+    if (!h.surveyed) {
+      showChartMessage(c, t("cf_NoResponses", "No responses in this period."));
       return;
     }
+    const share = (n) => Math.round(100 * n / h.surveyed);
+    const parts = h.questions.map((q, i) => ({
+      name: sub(t("cf_LeftAt", "Left at question {n}"), { n: q.position }),
+      value: q.left,
+      // The question most callers leave at is red; the others alternate greys so neighbours stay apart.
+      color: q === worst ? PALETTE.bad : [G[3], G[2]][i % 2]
+    })).concat([{ name: t("cf_ReachedEnd", "Reached the end"), value: h.finished, color: PALETTE.good }]);
+    c.setOption({
+      grid: { left: 0, right: 0, top: 32, bottom: 0, containLabel: false },
+      legend: { top: 0, left: 0, icon: "roundRect", itemWidth: 12, itemHeight: 8 },
+      tooltip: { trigger: "item", formatter: (p) => `${esc(p.seriesName)}: <b>${esc(count(p.value))}</b> (${esc(share(p.value))}%)` },
+      xAxis: { type: "value", max: h.surveyed, show: false },
+      yAxis: { type: "category", data: [""], show: false },
+      series: parts.map((p) => ({
+        name: p.name,
+        type: "bar",
+        stack: "callers",
+        barWidth: 28,
+        data: [p.value],
+        itemStyle: { color: p.color },
+        label: {
+          show: true,
+          position: "inside",
+          color: p.color === PALETTE.bad || p.color === PALETTE.good ? "#fff" : G[8],
+          formatter: (v) => share(v.value) >= 6 ? `${share(v.value)}%` : ""
+        }
+      }))
+    }, true);
+  }
+  function loadHealth() {
+    if (!toggleResults("cf-health-box", "cf-health-notes", state.versions.length > 0)) return;
     get("health", resultsQuery()).then((h) => {
-      const top = Math.max(1, h.steps[0].count);
-      const head = el("thead", {}, el(
-        "tr",
-        {},
-        el("th", { text: t("cf_Step", "Step") }),
-        el("th", { class: "cf-num", text: t("cf_Callers", "Callers") }),
-        el("th", { class: "cf-num", text: t("cf_OfOffered", "Of offered") }),
-        el("th", { class: "cf-num", text: t("cf_DroppedHere", "Dropped here") }),
-        el("th", { class: "cf-bar-cell" })
+      const worst = h.questions.reduce((best, q) => q.left && (!best || q.left_rate > best.left_rate) ? q : best, null);
+      fill($id("cf-health-kpis"), el(
+        "div",
+        { class: "cf-kpis" },
+        kpi(t("cf_HealthEligible", "Eligible Calls"), count(h.eligible), t("cf_HealthEligibleSub", "Answered by an agent on this survey's routes")),
+        kpi(
+          t("cf_HealthSurveyed", "Surveyed"),
+          h.eligible ? pct(100 * h.surveyed / h.eligible) : "\u2014",
+          sub(t("cf_HealthSurveyedSub", "{n} of {eligible} eligible calls"), { n: count(h.surveyed), eligible: count(h.eligible) })
+        ),
+        kpi(
+          t("cf_HealthFinished", "Reached the End"),
+          h.surveyed ? pct(100 * h.finished / h.surveyed) : "\u2014",
+          sub(t("cf_HealthFinishedSub", "{n} of {surveyed} surveyed callers"), { n: count(h.finished), surveyed: count(h.surveyed) })
+        ),
+        kpi(
+          t("cf_HealthWorst", "Most Callers Leave At"),
+          worst ? sub(t("cf_QuestionN", "Question {n}"), { n: worst.position }) : "\u2014",
+          worst ? sub(t("cf_HealthWorstSub", "{rate} of those who reached it"), { rate: pct(worst.left_rate) }) : t("cf_HealthNobodyLeft", "Nobody left early")
+        )
       ));
-      const body = el("tbody", {}, h.steps.map((step) => {
-        const bar = el("div", { class: "cf-bar" });
-        bar.style.width = `${Math.round(100 * step.count / top)}%`;
-        const name = HEALTH_STEPS[step.step] ? label(HEALTH_STEPS[step.step]) : `${t("cf_AnsweredQuestion", "Answered question")} ${step.step.slice(1)} (${scaleLabel(step.scale)})`;
-        return el(
+      renderProgress(h, worst);
+      $id("cf-health-table").replaceChildren(
+        el("thead", {}, el(
           "tr",
           {},
-          el("td", { text: name }),
-          el("td", { class: "cf-num", text: step.count.toLocaleString() }),
-          el("td", { class: "cf-num", text: fmt(step.share, "%") }),
-          el("td", { class: "cf-num", text: step.drop === null ? "" : step.drop.toLocaleString() }),
-          el("td", { class: "cf-bar-cell" }, bar)
-        );
-      }));
-      table.replaceChildren(head, body);
-      const skipped = Object.entries(h.skipped).map(([reason, n]) => el(
-        "tr",
-        {},
-        el("td", { text: SKIP_REASONS[reason] ? label(SKIP_REASONS[reason]) : reason }),
-        el("td", { class: "cf-num", text: n.toLocaleString() })
-      ));
+          el("th", { text: t("cf_Question", "Question") }),
+          el("th", { class: "cf-num", text: t("cf_Reached", "Reached") }),
+          el("th", { class: "cf-num", text: t("cf_Answered", "Answered") }),
+          el("th", { class: "cf-num", text: t("cf_LeftHere", "Left Here") }),
+          el("th", { class: "cf-num", text: t("cf_LeftRate", "% Who Left") })
+        )),
+        el("tbody", {}, h.questions.map((q) => el(
+          "tr",
+          {},
+          el("td", { text: questionName(q.position, q.scale) }),
+          el("td", { class: "cf-num", text: count(q.reached) }),
+          el("td", { class: "cf-num", text: count(q.answered) }),
+          el("td", { class: "cf-num", text: count(q.left) }),
+          el("td", { class: `cf-num${q === worst ? " cf-biggest-drop" : ""}`, text: q.reached ? pct(q.left_rate) : "\u2014" })
+        )))
+      );
+      const rows = Object.entries(h.skipped).map(([reason, n]) => ({ reason, n: reason === "too_short" ? n + h.excluded : n, before: n })).filter((r) => r.n > 0).sort((a, b) => b.n - a.n);
+      const notSurveyed = h.eligible - h.surveyed;
+      $id("cf-skipped-total").textContent = h.eligible ? sub(t("cf_NotSurveyedSub", "{n} of {eligible} eligible calls"), { n: count(notSurveyed), eligible: count(h.eligible) }) : "";
+      $id("cf-skipped-table").replaceChildren(
+        el("thead", {}, el(
+          "tr",
+          {},
+          el("th", { text: t("cf_Rule", "Rule") }),
+          el("th", { class: "cf-num", text: t("cf_Calls", "Calls") }),
+          el("th", { class: "cf-num", text: t("cf_OfEligible", "Of Eligible") })
+        )),
+        el("tbody", {}, rows.length === 0 ? el("tr", {}, el("td", { colspan: "3", class: "cf-empty-cell", text: t("cf_NoneSkipped", "Every eligible call was surveyed.") })) : rows.map((r) => el(
+          "tr",
+          {},
+          el(
+            "td",
+            {},
+            SKIP_REASONS[r.reason] ? label(SKIP_REASONS[r.reason]) : r.reason,
+            r.reason === "too_short" && h.excluded ? el("div", {
+              class: "cf-sub-line",
+              text: sub(t("cf_TooShortSplit", "{before} before the survey, {after} found in the call history afterwards"), { before: count(r.before), after: count(h.excluded) })
+            }) : null
+          ),
+          el("td", { class: "cf-num", text: count(r.n) }),
+          el("td", { class: "cf-num", text: pct(100 * r.n / h.eligible) })
+        )))
+      );
       fill(
         $id("cf-health-notes"),
-        el("h4", { class: "ui header", text: t("cf_NotAskedHeader", "Calls not asked, by rule") }),
-        el("table", { class: "ui very basic compact table cf-table cf-narrow" }, el(
-          "tbody",
-          {},
-          skipped,
-          el(
-            "tr",
-            {},
-            el("td", { text: t("cf_LeftOutShort", "asked, but left out: the call record shows less talk than the minimum") }),
-            el("td", { class: "cf-num", text: h.excluded.toLocaleString() })
-          )
-        )),
-        el("p", { class: "cf-note", text: t("cf_HealthHint", "A big drop at one question usually means its prompt is too long or unclear. Calls not asked are counted for all surveys together.") })
+        el("p", { class: "cf-note", text: t("cf_EligibleNote", "Eligible calls are calls an agent answered on this survey's routes. Callers who hang up before the agent and blind-transferred calls are never surveyed and aren't counted.") }),
+        worst ? el("p", { class: "cf-note", text: t("cf_HealthHint", "The question most callers leave at is shown in red. If many leave at one question, its prompt is often too long or unclear.") }) : null,
+        h.questions.length > 1 ? el("p", { class: "cf-note", text: t("cf_AnsweredNote", "A missed question after the first moves on to the next one, so Answered can be lower than Reached without anyone leaving.") }) : null
       );
     });
   }
@@ -893,12 +1244,15 @@
     return get("versions").then((data) => {
       state.versions = data.versions;
       state.labels = data.labels;
-      const current = $id("cf-version").value;
-      $id("cf-version").replaceChildren(...data.versions.map((v) => el(
+      const sel = $id("cf-version");
+      const current = sel.value || (data.versions.length ? String(data.versions[0].id) : "");
+      sel.replaceChildren(...data.versions.map((v) => el(
         "option",
         { value: String(v.id), selected: String(v.id) === current },
-        `${v.name} \xB7 v${v.version} (${metricName(v.scale)})${v.status === "archived" ? ` \xB7 ${label(STATUSES.archived)}` : ""}`
+        `${v.name} \xB7 ${t("cf_VersionShort", "v")}${v.version} \xB7 ${metricName(v.scale)}${v.status === "archived" ? ` (${label(STATUSES.archived)})` : ""}`
       )));
+      $(sel).dropdown("refresh");
+      $(sel).dropdown("set selected", sel.value);
     });
   }
   function refreshResults() {
@@ -907,9 +1261,9 @@
     if (state.tab === "health") loadHealth();
   }
   var FOLLOW_STATUSES = {
-    open: ["cf_FollowOpen", "Open"],
-    contacted: ["cf_FollowContacted", "Contacted"],
-    resolved: ["cf_FollowResolved", "Resolved"]
+    open: ["cf_FollowOpen", "Open", "blue"],
+    contacted: ["cf_FollowContacted", "Contacted", "yellow"],
+    resolved: ["cf_FollowResolved", "Resolved", "green"]
   };
   function hours(seconds) {
     if (seconds === null || seconds === void 0) return "\u2014";
@@ -917,83 +1271,72 @@
     if (seconds < 172800) return `${Math.round(seconds / 3600)} ${t("cf_Hours", "h")}`;
     return `${Math.round(seconds / 86400)} ${t("cf_Days", "days")}`;
   }
-  function callBackPanel(f, page) {
-    if (f.callback === "none") return el("div", { class: "cf-muted", text: t("cf_CallBackNoNumberShort", "No number to call back") });
-    const result = el("div");
-    const extensions = state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
-    const ext = select(`cf-cb-ext-${f.id}`, extensions, extensions.length ? extensions[0][0] : "");
-    const typed = f.callback === "typed" ? el("input", { type: "text", id: `cf-cb-typed-${f.id}`, maxlength: "40", placeholder: t("cf_TypeNumber", "Type the number to call") }) : null;
-    const go = () => {
-      const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
-      const question = t("cf_ConfirmCallBack", "Ring {ext}, then call {number} through the outgoing routes?").replace("{ext}", extLabel).replace("{number}", f.caller_num);
-      if (!window.confirm(question)) return;
-      post("callBack", { id: f.id, extension: ext.value, typed: typed ? typed.value : "" }).then(
-        () => {
-          message(result, "info", t("cf_CallBackRinging", "Ringing {ext}. The call goes out when it answers.").replace("{ext}", extLabel));
-        },
-        (xhr) => message(result, "negative", failText(xhr, t("cf_CallBackFailed", "The call-back could not be placed.")))
-      );
-    };
-    return el(
-      "div",
-      { class: "cf-callback" },
-      el("div", { class: "ui form" }, el(
-        "div",
-        { class: "fields" },
-        el("div", { class: "seven wide field" }, ext),
-        typed ? el("div", { class: "six wide field" }, typed) : null,
-        el("div", { class: "three wide field" }, el("button", {
-          class: "ui small button",
-          type: "button",
-          disabled: extensions.length === 0,
-          onclick: go
-        }, el("i", { class: "phone icon" }), t("cf_CallBack", "Call back")))
-      )),
-      f.callback === "typed" ? el("div", { class: "cf-note", text: t("cf_CallBackTypeHint", "This number isn't on the list of safe prefixes (Settings), so type it in to confirm. Callers can fake their number to make the PBX call an expensive line.") }) : null,
-      f.callbacks.length ? el("div", { class: "cf-muted", text: f.callbacks.map((c) => `${t("cf_CalledBack", "Called back")} ${dateTime(c.requested_at)} (${c.extension}${c.requested_by ? `, ${c.requested_by}` : ""})`).join(" \xB7 ") }) : null,
-      result
+  function setOpenCount(n) {
+    const badge = $id("cf-open-count");
+    badge.textContent = count(n);
+    badge.classList.toggle("cf-hidden", !n);
+  }
+  function renderFilter(counts) {
+    const all = counts.open + counts.contacted + counts.resolved;
+    const button = (status, text, n) => el("button", {
+      class: `ui button${state.followStatus === status ? " active" : ""}`,
+      type: "button",
+      "aria-pressed": String(state.followStatus === status),
+      onclick: () => {
+        state.followStatus = status;
+        loadFollowUps();
+      }
+    }, text, el("span", { class: "cf-count", text: count(n) }));
+    fill(
+      $id("cf-followup-filter"),
+      Object.keys(FOLLOW_STATUSES).map((k) => button(k, label(FOLLOW_STATUSES[k]), counts[k])),
+      button("", t("cf_FollowAll", "All"), all)
     );
   }
+  function followStatusLabel(status) {
+    const s = FOLLOW_STATUSES[status] || [status, status, ""];
+    return el("span", { class: `ui small basic ${s[2]} label`, text: label(s) });
+  }
   function loadFollowUps(page = 1) {
-    const status = $id("cf-followup-status").value;
-    get("followups", { status, page }).then((data) => {
-      $id("cf-followup-summary").textContent = t("cf_FollowSummary", "{open} open, {contacted} contacted, {resolved} resolved \xB7 time to resolve: {time}").replace("{open}", data.counts.open).replace("{contacted}", data.counts.contacted).replace("{resolved}", data.counts.resolved).replace("{time}", hours(data.avg_close_seconds));
+    return get("followups", { status: state.followStatus, page }).then((data) => {
+      renderFilter(data.counts);
+      setOpenCount(data.counts.open);
+      $id("cf-followup-summary").textContent = data.avg_close_seconds === null ? "" : sub(t("cf_TimeToResolve", "Average time to resolve: {time}"), { time: hours(data.avg_close_seconds) });
       const box = $id("cf-followups");
       if (data.rows.length === 0) {
-        box.replaceChildren(el("p", { class: "cf-muted", text: t("cf_NoFollowUps", "No follow-ups here. Low scores open one automatically.") }));
+        fill(
+          box,
+          el("p", { class: "cf-muted", text: t("cf_NoFollowUps", "No follow-ups here. Low scores open one automatically.") }),
+          el("p", { class: "cf-note", text: t("cf_FollowUpsHint", "A follow-up opens when a call's headline score is at or below the threshold under Settings, once the call is confirmed in the call history.") })
+        );
         return;
       }
       const rows = data.rows.map((f) => {
-        const result = el("div");
-        const statusSelect = select(`cf-fu-status-${f.id}`, Object.keys(FOLLOW_STATUSES).map((k) => [k, label(FOLLOW_STATUSES[k])]), f.status);
-        const note = el("textarea", { id: `cf-fu-note-${f.id}`, rows: "2", maxlength: "1000", text: f.note || "" });
-        const answers = Object.keys(f.answers).sort().map((pos) => pos === "1" ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t("cf_Q", "Q")}${pos}: ${f.answers[pos]}`).join(" \xB7 ");
+        var _a;
+        const others = Object.keys(f.answers).filter((pos) => pos !== "1").sort().map((pos) => `${t("cf_Q", "Q")}${pos}: ${f.answers[pos]}`).join(" \xB7 ");
+        const who = [f.agent ? nameOf("agent", f.agent) : "", f.queue ? nameOf("queue", f.queue) : ""].filter(Boolean).join(" \xB7 ");
         return el(
           "tr",
           {},
-          el("td", {}, el("div", { text: dateTime(f.ended_at) }), el("div", { class: "cf-muted", text: `${f.survey_name} \xB7 v${f.survey_version}` })),
-          el("td", {}, el("div", { text: answers || "\u2014" })),
+          el("td", {}, el("div", { class: "cf-nowrap", text: shortDateTime(f.ended_at) }), el("div", { class: "cf-sub-line", text: `${f.survey_name} \xB7 ${t("cf_VersionShort", "v")}${f.survey_version}` })),
           el(
             "td",
             {},
-            el("div", { text: f.caller_num || t("cf_Withheld", "withheld") }),
-            el("div", { class: "cf-muted", text: [f.agent ? `${t("cf_B_agent", "Agent")}: ${nameOf("agent", f.agent)}` : "", f.queue ? `${t("cf_B_queue", "Queue")}: ${nameOf("queue", f.queue)}` : ""].filter(Boolean).join(" \xB7 ") }),
-            callBackPanel(f, page)
+            el("span", { class: "cf-score", title: metricName(f.scale), text: (_a = f.answers["1"]) != null ? _a : "\u2014" }),
+            others ? el("div", { class: "cf-sub-line", text: others }) : null
           ),
+          el("td", {}, el("div", { text: f.caller_num || t("cf_Withheld", "Withheld") }), who ? el("div", { class: "cf-sub-line", text: who }) : null),
+          el("td", {}, followStatusLabel(f.status), f.note ? el("div", { class: "cf-sub-line", text: f.note.length > 60 ? `${f.note.slice(0, 60)}\u2026` : f.note }) : null),
           el(
             "td",
-            { class: "cf-followup-edit" },
-            el(
-              "div",
-              { class: "ui form" },
-              statusSelect,
-              note,
-              el("button", { class: "ui small button", type: "button", text: t("cf_Save", "Save"), onclick: () => {
-                post("saveFollowUp", { id: f.id, status: statusSelect.value, note: note.value }).then(() => loadFollowUps(page), (xhr) => message(result, "negative", failText(xhr, t("cf_SaveFailed", "The change could not be saved."))));
-              } }),
-              f.closed_by ? el("div", { class: "cf-muted", text: `${t("cf_ResolvedBy", "Resolved by")} ${f.closed_by}, ${dateTime(Number(f.closed_at))}` }) : null
+            { class: "cf-actions-cell" },
+            f.callback === "none" ? null : el(
+              "button",
+              { class: "ui basic small button", type: "button", onclick: () => openFollowUp(f, page, true) },
+              el("i", { class: "phone icon" }),
+              t("cf_CallBack", "Call Back")
             ),
-            result
+            el("button", { class: "ui basic small button", type: "button", onclick: () => openFollowUp(f, page, false) }, t("cf_Update", "Update"))
           )
         );
       });
@@ -1007,30 +1350,122 @@
             "tr",
             {},
             el("th", { text: t("cf_When", "When") }),
-            el("th", { text: t("cf_Answers", "Answers") }),
+            el("th", { text: t("cf_Score", "Score") }),
             el("th", { text: t("cf_Caller", "Caller") }),
-            el("th", { text: t("cf_Status", "Status") })
+            el("th", { text: t("cf_Status", "Status") }),
+            el("th")
           )),
           el("tbody", {}, rows)
         ),
         pages > 1 ? el(
           "div",
-          { class: "cf-editor-actions" },
+          { class: "cf-pager" },
           el("button", { class: "ui basic small button", type: "button", disabled: page <= 1, text: t("cf_Previous", "Previous"), onclick: () => loadFollowUps(page - 1) }),
-          el("span", { class: "cf-muted", text: `${page} / ${pages}` }),
+          el("span", { class: "cf-muted", text: sub(t("cf_PageOf", "Page {page} of {pages}"), { page, pages }) }),
           el("button", { class: "ui basic small button", type: "button", disabled: page >= pages, text: t("cf_Next", "Next"), onclick: () => loadFollowUps(page + 1) })
         ) : null,
         el("p", { class: "cf-note", text: t("cf_FollowUpsHint", "A follow-up opens when a call's headline score is at or below the threshold under Settings, once the call is confirmed in the call history.") })
       );
     });
   }
+  function callBackSection(f) {
+    if (f.callback === "none") return el("p", { class: "cf-muted", text: t("cf_CallBackNoNumberShort", "No number to call back.") });
+    const result = el("div");
+    const extensions = extensionOptions();
+    const ext = select("cf-cb-ext", extensions, extensions.length ? extensions[0][0] : "");
+    const typed = f.callback === "typed" ? el("input", { type: "text", id: "cf-cb-typed", maxlength: "40", autocomplete: "off" }) : null;
+    const go = () => {
+      const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
+      if (!window.confirm(sub(t("cf_ConfirmCallBack", "Ring {ext}, then call {number} through the outgoing routes?"), { ext: extLabel, number: f.caller_num }))) return;
+      post("callBack", { id: f.id, extension: ext.value, typed: typed ? typed.value : "" }).then(
+        () => message(result, "info", sub(t("cf_CallBackRinging", "Ringing {ext}. The call goes out when it answers."), { ext: extLabel })),
+        (xhr) => message(result, "negative", failText(xhr, t("cf_CallBackFailed", "The call-back could not be placed.")))
+      );
+    };
+    return el(
+      "div",
+      { class: "ui form" },
+      el(
+        "div",
+        { class: "fields" },
+        field(t("cf_RingFirst", "Ring Extension First"), ext, null, typed ? "six" : "ten"),
+        typed ? field(t("cf_TypeNumber", "Caller's Number (to Confirm)"), typed, null, "six") : null,
+        el("div", { class: "four wide field cf-form-buttons" }, el(
+          "button",
+          { class: "ui button", type: "button", disabled: extensions.length === 0, onclick: go },
+          el("i", { class: "phone icon" }),
+          t("cf_CallBack", "Call Back")
+        ))
+      ),
+      typed ? el("div", { class: "cf-note", text: t("cf_CallBackTypeHint", "This number isn't on the list of safe prefixes (Settings), so type it in to confirm. Callers can fake their number to make the PBX call an expensive line.") }) : null,
+      result
+    );
+  }
+  function openFollowUp(f, page, focusCallBack) {
+    state.followUp = { f, page };
+    const fact = (term, value) => value ? [el("dt", { text: term }), el("dd", { text: value })] : null;
+    const answers = Object.keys(f.answers).sort().map((pos) => pos === "1" ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t("cf_Q", "Q")}${pos}: ${f.answers[pos]}`).join(" \xB7 ");
+    const statusResult = el("div", { id: "cf-modal-result" });
+    $id("cf-modal-title").textContent = sub(t("cf_FollowUpTitle", "Follow-Up: {caller}"), { caller: f.caller_num || t("cf_Withheld", "Withheld") });
+    fill(
+      $id("cf-modal-content"),
+      el("div", { class: "cf-modal-section" }, el(
+        "dl",
+        { class: "cf-facts" },
+        fact(t("cf_When", "When"), dateTime(f.ended_at)),
+        fact(t("cf_Survey", "Survey"), `${f.survey_name} \xB7 ${t("cf_VersionShort", "v")}${f.survey_version}`),
+        fact(t("cf_Answers", "Answers"), answers || "\u2014"),
+        fact(t("cf_B_agent", "Agent"), f.agent ? nameOf("agent", f.agent) : ""),
+        fact(t("cf_B_queue", "Queue"), f.queue ? nameOf("queue", f.queue) : ""),
+        fact(t("cf_CalledBack", "Called back"), f.callbacks.map((c) => `${shortDateTime(c.requested_at)} (${c.extension}${c.requested_by ? `, ${c.requested_by}` : ""})`).join("; ")),
+        fact(t("cf_ResolvedBy", "Resolved by"), f.closed_by ? `${f.closed_by}, ${shortDateTime(Number(f.closed_at))}` : "")
+      )),
+      el("div", { class: "cf-modal-section" }, el("h4", { class: "ui header", text: t("cf_CallBackHeader", "Call Back") }), callBackSection(f)),
+      el(
+        "div",
+        { class: "cf-modal-section" },
+        el("h4", { class: "ui header", text: t("cf_StatusHeader", "Status and Note") }),
+        el(
+          "div",
+          { class: "ui form" },
+          field(t("cf_Status", "Status"), select("cf-fu-status", Object.keys(FOLLOW_STATUSES).map((k) => [k, label(FOLLOW_STATUSES[k])]), f.status)),
+          field(t("cf_Note", "Note"), el("textarea", { id: "cf-fu-note", rows: "3", maxlength: "1000", text: f.note || "" }))
+        ),
+        statusResult
+      )
+    );
+    $("#cf-followup-modal").modal({ autofocus: false, onHidden: () => {
+      state.followUp = null;
+    } }).modal("show");
+    const focus = focusCallBack ? $id("cf-cb-typed") || $id("cf-cb-ext") : $id("cf-fu-status");
+    if (focus) setTimeout(() => focus.focus(), 350);
+  }
+  function saveFollowUp() {
+    if (!state.followUp) return;
+    const { f, page } = state.followUp;
+    post("saveFollowUp", { id: f.id, status: $id("cf-fu-status").value, note: $id("cf-fu-note").value }).then(
+      () => {
+        $("#cf-followup-modal").modal("hide");
+        loadFollowUps(page);
+      },
+      (xhr) => message($id("cf-modal-result"), "negative", saveFailed(xhr))
+    );
+  }
+  function updateTabsOverflow() {
+    const tabs = $id("cf-tabs");
+    const overflow = tabs.scrollWidth > tabs.clientWidth + 1;
+    tabs.classList.toggle("cf-overflow", overflow);
+    tabs.classList.toggle("cf-at-end", overflow && tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 1);
+  }
+  var RESULT_TABS = ["overview", "breakdowns", "health"];
   function selectTab(tab) {
     state.tab = tab;
     document.querySelectorAll("#call-feedback [data-tab]").forEach((n) => n.classList.toggle("active", n.dataset.tab === tab));
-    $id("cf-toolbar").classList.toggle("cf-hidden", !["overview", "breakdowns", "health"].includes(tab));
+    $id("cf-toolbar").classList.toggle("cf-hidden", !RESULT_TABS.includes(tab) || state.versions.length === 0);
     clearError();
-    if (["overview", "breakdowns", "health"].includes(tab)) {
+    if (RESULT_TABS.includes(tab)) {
       loadVersions().then(() => {
+        $id("cf-toolbar").classList.toggle("cf-hidden", state.versions.length === 0);
         refreshResults();
         Object.values(state.charts).forEach((c) => c.resize());
       });
@@ -1043,7 +1478,9 @@
     if (tab === "followups") loadVersions().then(() => loadFollowUps());
   }
   function init() {
+    $("#call-feedback .cf-toolbar .ui.dropdown, #cf-breakdown").dropdown({ placeholder: false });
     document.querySelectorAll("#cf-tabs .item").forEach((a) => a.addEventListener("click", () => selectTab(a.dataset.tab)));
+    $id("cf-tabs").addEventListener("scroll", updateTabsOverflow);
     $id("cf-new-language").replaceChildren(...Object.keys(LANGUAGES).map((l) => el("option", { value: l }, languageLabel(l))));
     $id("cf-new-survey").addEventListener("click", () => {
       $id("cf-new-form").classList.remove("cf-hidden");
@@ -1051,19 +1488,27 @@
     });
     $id("cf-new-cancel").addEventListener("click", () => $id("cf-new-form").classList.add("cf-hidden"));
     $id("cf-new-form").addEventListener("submit", createSurvey);
+    $id("cf-modal-close").addEventListener("click", () => $("#cf-followup-modal").modal("hide"));
+    $id("cf-modal-save").addEventListener("click", saveFollowUp);
+    addExportButtons();
     applyPreset();
     $id("cf-preset").addEventListener("change", () => {
+      if ($id("cf-preset").value === "custom") return;
       applyPreset();
       refreshResults();
     });
     ["cf-from", "cf-to"].forEach((id) => $id(id).addEventListener("change", () => {
       $id("cf-preset").value = "custom";
+      $("#cf-preset").dropdown("set selected", "custom");
       refreshResults();
     }));
     ["cf-version", "cf-direction"].forEach((id) => $id(id).addEventListener("change", refreshResults));
     $id("cf-breakdown").addEventListener("change", loadBreakdown);
-    $id("cf-followup-status").addEventListener("change", () => loadFollowUps());
-    window.addEventListener("resize", () => Object.values(state.charts).forEach((c) => c.resize()));
+    window.addEventListener("resize", () => {
+      Object.values(state.charts).forEach((c) => c.resize());
+      updateTabsOverflow();
+    });
+    updateTabsOverflow();
     get("options").then((options) => {
       state.options = options;
       return loadVersions();
@@ -1071,6 +1516,7 @@
       const asked = new URLSearchParams(window.location.search).get("tab");
       const tabs = ["overview", "breakdowns", "health", "followups", "surveys", "settings"];
       selectTab(tabs.includes(asked) ? asked : state.versions.length ? "overview" : "surveys");
+      if (asked !== "followups") get("followups", { status: "open", page: 1 }).then((d) => setOpenCount(d.counts.open));
     });
   }
   $(document).ready(init);

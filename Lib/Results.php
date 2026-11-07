@@ -36,6 +36,9 @@ final class Results
     /** Ranges longer than this are trended by week. */
     private const int DAILY_UP_TO_DAYS = 62;
 
+    /** Ranges of at least this many days are trended by week when a typical day has too few responses for a score. */
+    private const int WEEKLY_FROM_DAYS = 14;
+
     public function __construct(private readonly PDO $db, private readonly int $minSample)
     {
     }
@@ -99,7 +102,8 @@ final class Results
             'response_rate'   => self::percent(count($started), count($counted)),
             'completion_rate' => self::percent(count($completed), count($started)),
             'trend'           => $this->trend($headline, $counted, $from, $to),
-            'skipped'         => $this->skipped($from, $to, $direction),
+            'followups'       => $this->followUps($survey['id'], $from, $to, $direction),
+            'skipped'         => $this->skipped($survey['id'], $from, $to, $direction),
         ];
     }
 
@@ -146,9 +150,17 @@ final class Results
     }
 
     /**
-     * Survey health: how far callers got through the survey (offered, each
-     * question answered, completed), the drop-off at each step, the calls left
-     * out of scores, and the calls the rules didn't ask, by reason.
+     * How the version's eligible calls went: how many a rule left unasked,
+     * how far surveyed callers got, and where they left.
+     *
+     * Eligible calls are those an agent answered on the survey's routes: the
+     * rule skips plus every survey session. A session found too short in the
+     * CDR after the survey is counted with the "too short" rule, not as
+     * surveyed. A caller's progress is the last question they answered: a
+     * missed headline question ends the survey, but a missed later question
+     * moves on, so "left at question k" means the last answer was question
+     * k-1, and someone who skips question 2 but answers question 3 got to
+     * the end.
      *
      * @param array<string, mixed> $q as overview()
      *
@@ -159,24 +171,45 @@ final class Results
         [$survey, $from, $to, $direction] = $this->params($q);
         $sessions = $this->sessions($survey['id'], $from, $to, $direction);
         $counted = array_values(array_filter($sessions, fn (array $s): bool => !$s['excluded']));
-        $steps = [['step' => 'offered', 'count' => count($counted)]];
-        foreach (array_keys($survey['questions']) as $position) {
-            $steps[] = ['step' => "q$position", 'scale' => $survey['questions'][$position]['scale'],
-                'count' => count(array_filter($counted, fn (array $s): bool => isset($s['answers'][$position])))];
+        $skipped = $this->skipped($survey['id'], $from, $to, $direction);
+        $excluded = count($sessions) - count($counted);
+
+        $positions = array_keys($survey['questions']);
+        sort($positions);
+        // How many questions each caller got through: the index of their last answer.
+        $progress = array_fill(0, count($positions) + 1, 0);
+        foreach ($counted as $s) {
+            $last = 0;
+            foreach ($positions as $i => $position) {
+                if (isset($s['answers'][$position])) {
+                    $last = $i + 1;
+                }
+            }
+            $progress[$last]++;
         }
-        $steps[] = ['step' => 'completed', 'count' => count(array_filter($counted, fn (array $s): bool => $s['status'] === 'completed'))];
-        foreach ($steps as $i => &$step) {
-            $previous = $i === 0 ? null : $steps[$i - 1]['count'];
-            $step['share'] = self::percent($step['count'], $steps[0]['count']);
-            $step['drop'] = $previous === null ? null : $previous - $step['count'];
+        $questions = [];
+        $reached = count($counted);
+        foreach ($positions as $i => $position) {
+            $left = $progress[$i];
+            $questions[] = [
+                'position' => $position,
+                'scale'    => $survey['questions'][$position]['scale'],
+                'reached'  => $reached,
+                'answered' => count(array_filter($counted, fn (array $s): bool => isset($s['answers'][$position]))),
+                'left'     => $left,
+                'left_rate' => self::percent($left, $reached),
+            ];
+            $reached -= $left;
         }
-        unset($step);
 
         return [
-            'survey'   => ['id' => $survey['id'], 'name' => $survey['name'], 'version' => $survey['version']],
-            'steps'    => $steps,
-            'excluded' => count($sessions) - count($counted),
-            'skipped'  => $this->skipped($from, $to, $direction),
+            'survey'    => ['id' => $survey['id'], 'name' => $survey['name'], 'version' => $survey['version']],
+            'eligible'  => array_sum($skipped) + count($sessions),
+            'surveyed'  => count($counted),
+            'finished'  => $reached,
+            'questions' => $questions,
+            'skipped'   => $skipped,
+            'excluded'  => $excluded,
         ];
     }
 
@@ -301,13 +334,18 @@ final class Results
     }
 
     /**
-     * Score and responses per day, or per week (from Monday) on long ranges.
+     * Score and responses per day, or per week (from Monday) on long ranges
+     * and on ranges of two weeks or more where an average day has fewer
+     * responses than a score needs, so the line isn't mostly gaps.
      *
      * @return array{interval: string, points: list<array<string, mixed>>}
      */
     private function trend(string $scale, array $sessions, DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        $weekly = (int)$from->diff($to)->days + 1 > self::DAILY_UP_TO_DAYS;
+        $days = (int)$from->diff($to)->days + 1;
+        $answered = count(array_filter($sessions, fn (array $s): bool => isset($s['answers'][1])));
+        $weekly = $days > self::DAILY_UP_TO_DAYS
+            || ($days >= self::WEEKLY_FROM_DAYS && $answered < $days * $this->minSample);
         $buckets = [];
         $start = $weekly ? $from->modify('monday this week') : $from;
         for ($d = $start; $d <= $to; $d = $d->modify($weekly ? '+1 week' : '+1 day')) {
@@ -331,11 +369,37 @@ final class Results
         return ['interval' => $weekly ? 'week' : 'day', 'points' => $points];
     }
 
-    /** @return array<string, int> Skip reason => calls not asked. */
-    private function skipped(DateTimeImmutable $from, DateTimeImmutable $to, string $direction): array
+    /**
+     * Follow-ups opened for the period's calls, by status.
+     *
+     * @return array{open: int, contacted: int, resolved: int}
+     */
+    private function followUps(int $surveyId, DateTimeImmutable $from, DateTimeImmutable $to, string $direction): array
     {
-        $sql = 'SELECT reason, SUM(count) FROM m_SkipCounts WHERE day >= ? AND day <= ?';
-        $params = [$from->format('Y-m-d'), $to->format('Y-m-d')];
+        $sql = 'SELECT f.status, COUNT(*) FROM m_FollowUps f JOIN m_SurveySessions s ON s.id = f.session_id
+            WHERE s.survey_id = ? AND s.is_test = 0 AND s.ended_at >= ? AND s.ended_at < ?';
+        $params = [$surveyId, $from->getTimestamp(), $to->modify('+1 day')->getTimestamp()];
+        if ($direction !== '') {
+            $sql .= ' AND s.direction = ?';
+            $params[] = $direction;
+        }
+        $stmt = $this->db->prepare($sql . ' GROUP BY f.status');
+        $stmt->execute($params);
+        $counts = ['open' => 0, 'contacted' => 0, 'resolved' => 0];
+        foreach ($stmt->fetchAll(PDO::FETCH_NUM) as [$status, $n]) {
+            if (isset($counts[$status])) {
+                $counts[$status] = (int)$n;
+            }
+        }
+
+        return $counts;
+    }
+
+    /** @return array<string, int> Skip reason => calls not asked. */
+    private function skipped(int $surveyId, DateTimeImmutable $from, DateTimeImmutable $to, string $direction): array
+    {
+        $sql = 'SELECT reason, SUM(count) FROM m_SkipCounts WHERE survey_id = ? AND day >= ? AND day <= ?';
+        $params = [$surveyId, $from->format('Y-m-d'), $to->format('Y-m-d')];
         if ($direction !== '') {
             $sql .= ' AND direction = ?';
             $params[] = $direction;

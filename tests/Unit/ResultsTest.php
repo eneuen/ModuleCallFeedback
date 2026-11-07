@@ -89,6 +89,41 @@ final class ResultsTest extends TestCase
         self::assertSame(['period' => '2026-11-03', 'responses' => 1, 'score' => 100.0, 'low_sample' => true], $o['trend']['points'][1]);
     }
 
+    public function testOverviewCountsThePeriodsFollowUps(): void
+    {
+        $this->session('2026-11-03 10:00', [1 => 2]);
+        $this->session('2026-11-04 10:00', [1 => 3]);
+        $this->session('2026-11-05 10:00', [1 => 1], ['is_test' => true]);
+        $this->session('2026-10-28 10:00', [1 => 0]); // previous week
+        $now = Surveys::NOW;
+        foreach ($this->module->query('SELECT id FROM m_SurveySessions ORDER BY id')->fetchAll(PDO::FETCH_COLUMN) as $i => $id) {
+            $status = $i === 1 ? 'resolved' : 'open';
+            $this->module->exec("INSERT INTO m_FollowUps (session_id, status, created_at) VALUES ($id, '$status', $now)");
+        }
+
+        $o = $this->results()->overview($this->query());
+
+        self::assertSame(['open' => 1, 'contacted' => 0, 'resolved' => 1], $o['followups'], 'Test calls and other periods are left out.');
+    }
+
+    public function testThinDailyTrendsGoWeekly(): void
+    {
+        $this->session('2026-10-20 10:00', [1 => 10]);
+        $this->session('2026-11-03 10:00', [1 => 9]);
+
+        $o = $this->results()->overview($this->query(['from' => '2026-10-10', 'to' => '2026-11-08']));
+
+        self::assertSame('week', $o['trend']['interval'], 'Two responses over 30 days: far below 2 a day.');
+
+        for ($i = 0; $i < 30; $i++) {
+            $this->session('2026-11-05 10:00', [1 => 10]);
+            $this->session('2026-11-06 10:00', [1 => 10]);
+        }
+        $o = $this->results()->overview($this->query(['from' => '2026-10-10', 'to' => '2026-11-08']));
+
+        self::assertSame('day', $o['trend']['interval'], '62 responses over 30 days: enough for a daily line.');
+    }
+
     public function testLongRangesTrendByWeek(): void
     {
         $o = $this->results()->overview($this->query(['from' => '2026-08-01', 'to' => '2026-11-08']));
@@ -117,16 +152,33 @@ final class ResultsTest extends TestCase
     {
         $this->session('2026-11-03 10:00', [1 => 10, 2 => 1]);
         $this->session('2026-11-03 11:00', [1 => 9, 2 => 0]);
-        $this->session('2026-11-04 12:00', [1 => 3]);
-        $this->session('2026-11-05 09:00', [], ['status' => 'offered']);
+        $this->session('2026-11-04 12:00', [1 => 3]);                        // left at question 2
+        $this->session('2026-11-05 09:00', [], ['status' => 'offered']);    // left at question 1
+        $this->session('2026-11-05 10:00', [2 => 1]);                        // missed question 1, answered the last
+        $this->session('2026-11-05 11:00', [1 => 8, 2 => 1]);
+        $this->module->exec("UPDATE m_SurveySessions SET excluded = 1 WHERE linkedid = 'call-6'");
+        $this->skip('too_short');
+        $this->skip('too_short');
+        $this->skip('capped');
+        $this->skip('capped', 999);
 
         $h = $this->results()->health($this->query());
 
-        self::assertSame(['offered', 'q1', 'q2', 'completed'], array_column($h['steps'], 'step'));
-        self::assertSame([4, 3, 2, 2], array_column($h['steps'], 'count'));
-        self::assertSame([null, 1, 1, 0], array_column($h['steps'], 'drop'));
-        self::assertSame(75.0, $h['steps'][1]['share']);
-        self::assertSame(ScalePresets::YES_NO, $h['steps'][2]['scale']);
+        self::assertSame(9, $h['eligible'], 'Six sessions and three skips of this version.');
+        self::assertSame([5, 3, 1], [$h['surveyed'], $h['finished'], $h['excluded']]);
+        self::assertSame(['too_short' => 2, 'capped' => 1], array_filter($h['skipped']), 'Another version\'s skips are left out.');
+        self::assertSame([5, 3, 1, 20.0], array_values(array_diff_key($h['questions'][0], array_flip(['position', 'scale']))));
+        self::assertSame([4, 3, 1, 25.0], array_values(array_diff_key($h['questions'][1], array_flip(['position', 'scale']))));
+        self::assertSame(ScalePresets::YES_NO, $h['questions'][1]['scale']);
+    }
+
+    /** A call this version's rules (or another version's) left unasked, on 4 November. */
+    private function skip(string $reason, ?int $surveyId = null): void
+    {
+        $this->n++;
+        $survey = (new SurveyRepository($this->module))->find($this->survey);
+        $this->store->record(FeedbackStoreTest::record(['linkedid' => "skip-$this->n", 'status' => 'skipped', 'reason' => $reason, 'answers' => [],
+            'ended_at' => (new DateTimeImmutable('2026-11-04 10:00'))->getTimestamp()]), $surveyId === null ? $survey : ['id' => $surveyId] + $survey);
     }
 
     public function testBreakdownByWaitAndTalkTime(): void
@@ -147,11 +199,10 @@ final class ResultsTest extends TestCase
 
     public function testSkippedCallsAreCountedByReason(): void
     {
-        $skip = FeedbackStoreTest::record(['status' => 'skipped', 'reason' => 'capped', 'answers' => [],
-            'ended_at' => (new DateTimeImmutable('2026-11-04 10:00'))->getTimestamp()]);
-        $this->store->record($skip, (new SurveyRepository($this->module))->find($this->survey));
+        $this->skip('capped');
+        $this->skip('capped', 999);
 
-        self::assertSame(1, $this->results()->overview($this->query())['skipped']['capped']);
+        self::assertSame(1, $this->results()->overview($this->query())['skipped']['capped'], 'Only this version\'s skips.');
     }
 
     /** @return iterable<string, array{array<string, string>}> */

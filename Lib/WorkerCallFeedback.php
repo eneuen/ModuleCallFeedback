@@ -55,9 +55,6 @@ class WorkerCallFeedback extends WorkerBase
     /** Internal bookkeeping in m_Settings: the day the last summary went out. */
     private const string SUMMARY_SENT_ON = 'summary_sent_on';
 
-    /** Retention the core uses when PBXRecordSavePeriod is not set. */
-    private const string DEFAULT_RETENTION_DAYS = '360';
-
     private FeedbackStore $store;
 
     private SurveyRepository $surveys;
@@ -314,7 +311,7 @@ class WorkerCallFeedback extends WorkerBase
     private function maintenance(string $configFile): void
     {
         try {
-            $retention = (int)CdrReader::pbxSetting($configFile, 'PBXRecordSavePeriod', self::DEFAULT_RETENTION_DAYS);
+            $retention = (int)CdrReader::pbxSetting($configFile, 'PBXRecordSavePeriod', CallFeedbackConf::DEFAULT_RETENTION_DAYS);
             $privacy = new Privacy($this->moduleDb);
             $lifetime = $privacy->capKeyLifetimeDays($retention);
             $deleted = 0;

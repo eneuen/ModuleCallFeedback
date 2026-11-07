@@ -284,6 +284,9 @@ class ModuleCallFeedbackController extends BaseController
                 'settings'      => ModuleSettings::load($db),
                 'exclusions'    => (new SurveyRepository($db))->exclusionList(),
                 'mailEnabled'   => $this->mailEnabled(),
+                // Days the PBX keeps its call history; callers' numbers follow it. Under 30: no limit.
+                'retentionDays' => (int)$this->pbxSetting('PBXRecordSavePeriod', CallFeedbackConf::DEFAULT_RETENTION_DAYS),
+                'retentionUnlimitedBelow' => Privacy::UNLIMITED_BELOW_DAYS,
             ];
         });
     }
@@ -481,10 +484,17 @@ class ModuleCallFeedbackController extends BaseController
 
     private function mailEnabled(): bool
     {
-        $stmt = $this->configDb()->prepare("SELECT value FROM m_PbxSettings WHERE key = 'MailEnableNotifications'");
-        $stmt->execute();
+        return $this->pbxSetting('MailEnableNotifications', '') === '1';
+    }
 
-        return (string)$stmt->fetchColumn() === '1';
+    /** A PBX setting from m_PbxSettings, or $default when it is not set. */
+    private function pbxSetting(string $key, string $default): string
+    {
+        $stmt = $this->configDb()->prepare('SELECT value FROM m_PbxSettings WHERE key = ?');
+        $stmt->execute([$key]);
+        $value = $stmt->fetchColumn();
+
+        return $value === false || $value === null || $value === '' ? $default : (string)$value;
     }
 
     private function moduleFile(): string

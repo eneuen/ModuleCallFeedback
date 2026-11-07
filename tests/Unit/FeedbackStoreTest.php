@@ -104,18 +104,21 @@ final class FeedbackStoreTest extends TestCase
         self::assertSame('offered', $this->store->session('mikopbx-1793993854.585', 1)['status']);
     }
 
-    public function testCountsSkippedCallsPerDayRouteAndReason(): void
+    public function testCountsSkippedCallsPerDaySurveyRouteAndReason(): void
     {
         $skip = self::record(['status' => 'skipped', 'reason' => 'too_short', 'answers' => []]);
         $this->store->record($skip, self::survey());
         $this->store->record(['linkedid' => 'mikopbx-2'] + $skip, self::survey());
         $this->store->record(['direction' => 'out', 'route_id' => 35, 'context_id' => '', 'did' => ''] + $skip, self::survey());
+        $this->store->record(['linkedid' => 'mikopbx-3', 'survey' => 2] + $skip, ['id' => 2] + self::survey());
 
         $counts = $this->store->skipCounts();
-        self::assertCount(2, $counts);
+        self::assertCount(3, $counts);
         self::assertSame('in:SIP-TRUNK-2EC28F63:5551001', $counts[0]['route_key']);
         self::assertSame(2, $counts[0]['count']);
+        self::assertSame(1, $counts[0]['survey_id']);
         self::assertSame('out:35', $counts[1]['route_key']);
+        self::assertSame([2, 1], [$counts[2]['survey_id'], $counts[2]['count']], 'Another version counts apart.');
         self::assertSame(date('Y-m-d', 1793993868), $counts[0]['day']);
         self::assertNull($this->store->session('mikopbx-1793993854.585', 1), 'A skipped call is not a session.');
     }
