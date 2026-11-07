@@ -131,6 +131,7 @@ return [
     'cf_LanguageHint' => 'Built-in prompts play in this language. Record your own prompts in it too.',
     'cf_LanguageRussian' => 'Russian',
     'cf_Last7Days' => 'Last 7 Days',
+    'cf_LeaveWithoutSaving' => 'Leave Without Saving',
     'cf_LeftAt' => 'Left at question {n}',
     'cf_LeftHere' => 'Left Here',
     'cf_LeftRate' => '% Who Left',

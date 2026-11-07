@@ -345,10 +345,32 @@
       fill(table, head, body, toggle, archivedBody);
     });
   }
-  var canLeaveEditor = () => !state.dirty || window.confirm(t("cf_ConfirmLeave", "You have unsaved changes to this survey. Leave without saving them?"));
+  function confirmDialog(text, okText, danger = true) {
+    return new Promise((resolve) => {
+      let answer = false;
+      $id("cf-confirm-text").textContent = text;
+      const ok = $id("cf-confirm-ok");
+      ok.textContent = okText;
+      ok.className = `ui ${danger ? "negative" : "primary"} button`;
+      ok.onclick = () => {
+        answer = true;
+        $("#cf-confirm-modal").modal("hide");
+      };
+      $id("cf-confirm-cancel").onclick = () => $("#cf-confirm-modal").modal("hide");
+      $("#cf-confirm-modal").modal({ allowMultiple: true, autofocus: false, onHidden: () => resolve(answer) }).modal("show");
+    });
+  }
+  var canLeaveEditor = () => !state.dirty ? Promise.resolve(true) : confirmDialog(t("cf_ConfirmLeave", "You have unsaved changes to this survey. Leave without saving them?"), t("cf_LeaveWithoutSaving", "Leave Without Saving"));
   function showList() {
-    if (!canLeaveEditor()) return;
-    state.dirty = false;
+    if (state.dirty) {
+      canLeaveEditor().then((ok) => {
+        if (ok) {
+          state.dirty = false;
+          showList();
+        }
+      });
+      return;
+    }
     state.editing = null;
     clearInterval(state.testPoll);
     $id("cf-editor").classList.add("cf-hidden");
@@ -364,7 +386,11 @@
     }, (xhr) => showError(saveFailed(xhr)));
   }
   function openEditor(id, force = false) {
-    if (!force && state.editing && state.editing.survey.id !== id && !canLeaveEditor()) return $.Deferred().resolve().promise();
+    if (!force && state.editing && state.editing.survey.id !== id && state.dirty) {
+      const done = $.Deferred();
+      canLeaveEditor().then((ok) => ok ? openEditor(id, true).then(done.resolve, done.reject) : done.resolve());
+      return done.promise();
+    }
     clearError();
     clearInterval(state.testPoll);
     return get("survey", { id }).then((data) => {
@@ -522,12 +548,12 @@
       archived ? null : el("button", { class: "ui primary small button", type: "submit", form: "cf-editor-form", text: t("cf_Save", "Save") }),
       draft ? null : el(
         "button",
-        { class: "ui basic small button", type: "button", onclick: () => {
-          if (canLeaveEditor()) {
+        { class: "ui basic small button", type: "button", onclick: () => canLeaveEditor().then((ok) => {
+          if (ok) {
             state.dirty = false;
             showResults(s.id);
           }
-        } },
+        }) },
         el("i", { class: "chart bar outline icon" }),
         t("cf_Results", "Results")
       ),
@@ -554,9 +580,9 @@
         {
           class: "ui basic small negative button",
           type: "button",
-          onclick: () => {
-            if (window.confirm(t("cf_ConfirmDelete", "Delete this draft and its test calls? This can't be undone."))) deleteDraft(s.id, result);
-          }
+          onclick: () => confirmDialog(t("cf_ConfirmDelete", "Delete this draft and its test calls? This can't be undone."), t("cf_DeleteDraft", "Delete Draft")).then((ok) => {
+            if (ok) deleteDraft(s.id, result);
+          })
         },
         el("i", { class: "trash alternate outline icon" }),
         t("cf_DeleteDraft", "Delete Draft")
@@ -566,9 +592,9 @@
         {
           class: "ui basic small negative button",
           type: "button",
-          onclick: () => {
-            if (window.confirm(t("cf_ConfirmArchive", "Archive this version? It stops running and can't be edited again. Its results are kept."))) act("archiveSurvey", s.id, result);
-          }
+          onclick: () => confirmDialog(t("cf_ConfirmArchive", "Archive this version? It stops running and can't be edited again. Its results are kept."), t("cf_Stop", "Stop and Archive")).then((ok) => {
+            if (ok) act("archiveSurvey", s.id, result);
+          })
         },
         el("i", { class: "archive icon" }),
         t("cf_Stop", "Stop and Archive")
@@ -995,14 +1021,14 @@
           { class: "ui form", onsubmit: (e) => {
             e.preventDefault();
             const number = $id("cf-forget-number").value.trim();
-            if (!number || !window.confirm(sub(t("cf_ConfirmForget", "Delete every survey answer and follow-up for {number}? This can't be undone."), { number }))) return;
-            post("forgetNumber", { number }).then(
+            if (!number) return;
+            confirmDialog(sub(t("cf_ConfirmForget", "Delete every survey answer and follow-up for {number}? This can't be undone."), { number }), t("cf_Delete", "Delete")).then((ok) => ok && post("forgetNumber", { number }).then(
               (r) => {
                 $id("cf-forget-number").value = "";
                 message(forgetResult, "positive", sub(t("cf_Forgotten", "Deleted {n} survey session(s) for that number."), { n: r.sessions }));
               },
               (xhr) => message(forgetResult, "negative", saveFailed(xhr))
-            );
+            ));
           } },
           el(
             "div",
@@ -1548,11 +1574,14 @@
     const typed = f.callback === "typed" ? el("input", { type: "text", id: "cf-cb-typed", maxlength: "40", autocomplete: "off" }) : null;
     const go = () => {
       const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
-      if (!window.confirm(sub(t("cf_ConfirmCallBack", "Ring {ext}, then call {number} through the outgoing routes?"), { ext: extLabel, number: f.caller_num }))) return;
-      post("callBack", { id: f.id, extension: ext.value, typed: typed ? typed.value : "" }).then(
+      confirmDialog(
+        sub(t("cf_ConfirmCallBack", "Ring {ext}, then call {number} through the outgoing routes?"), { ext: extLabel, number: f.caller_num }),
+        t("cf_CallBack", "Call Back"),
+        false
+      ).then((ok) => ok && post("callBack", { id: f.id, extension: ext.value, typed: typed ? typed.value : "" }).then(
         () => message(result, "info", sub(t("cf_CallBackRinging", "Ringing {ext}. The call goes out when it answers."), { ext: extLabel })),
         (xhr) => message(result, "negative", failText(xhr, t("cf_CallBackFailed", "The call-back could not be placed.")))
-      );
+      ));
     };
     return el(
       "div",
@@ -1631,7 +1660,15 @@
   }
   var RESULT_TABS = ["overview", "breakdowns", "health"];
   function selectTab(tab) {
-    if (state.tab === "surveys" && tab !== "surveys" && state.editing && !canLeaveEditor()) return;
+    if (state.tab === "surveys" && tab !== "surveys" && state.editing && state.dirty) {
+      canLeaveEditor().then((ok) => {
+        if (ok) {
+          state.dirty = false;
+          selectTab(tab);
+        }
+      });
+      return;
+    }
     if (tab !== "surveys") state.dirty = false;
     state.tab = tab;
     document.querySelectorAll("#call-feedback [data-tab]").forEach((n) => n.classList.toggle("active", n.dataset.tab === tab));

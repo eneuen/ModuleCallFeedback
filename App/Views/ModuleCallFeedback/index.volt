@@ -140,6 +140,14 @@
         <div id="cf-settings"></div>
     </div>
 
+    <div class="ui mini modal" id="cf-confirm-modal">
+        <div class="content"><p id="cf-confirm-text"></p></div>
+        <div class="actions">
+            <button class="ui basic button" type="button" id="cf-confirm-cancel">{{ t._('cf_Cancel')|e }}</button>
+            <button class="ui negative button" type="button" id="cf-confirm-ok"></button>
+        </div>
+    </div>
+
     <div class="ui small modal" id="cf-followup-modal">
         <div class="header" id="cf-modal-title"></div>
         <div class="content" id="cf-modal-content"></div>

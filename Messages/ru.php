@@ -131,6 +131,7 @@ return [
     'cf_LanguageHint' => 'Встроенные сообщения звучат на этом языке. Свои сообщения тоже записывайте на нём.',
     'cf_LanguageRussian' => 'Русский',
     'cf_Last7Days' => 'За 7 дней',
+    'cf_LeaveWithoutSaving' => 'Уйти без сохранения',
     'cf_LeftAt' => 'Ушли на вопросе {n}',
     'cf_LeftHere' => 'Ушли здесь',
     'cf_LeftRate' => '% ушедших',

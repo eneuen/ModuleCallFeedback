@@ -152,6 +152,7 @@
 #cf-followup-modal .cf-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--cf-space-1) var(--cf-space-4); }
 #cf-followup-modal .cf-facts dt { color: var(--cf-muted); }
 #cf-followup-modal .cf-facts dd { margin: 0; }
+#cf-confirm-modal .content p { font-size: 1.05rem; line-height: 1.5; color: #1f2933; }
 #cf-followup-modal .cf-note { color: var(--cf-muted); font-size: .9em; margin-top: var(--cf-space-2); }
 
 /* ---------------------------------------------------------------- surveys and editor */
