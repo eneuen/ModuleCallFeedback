@@ -102,7 +102,9 @@ SKIP_REASONS = ("too_short", "outside_hours", "excluded", "capped", "sampled_out
 
 
 def skip_totals():
-    rows = db_rows("SELECT reason, SUM(count) AS n FROM m_SkipCounts GROUP BY reason")
+    """Skips counted for the active survey only, so a skip stored under the wrong survey fails the scenario."""
+    survey = int(active_survey_id())
+    rows = db_rows(f"SELECT reason, SUM(count) AS n FROM m_SkipCounts WHERE survey_id = {survey} GROUP BY reason")
     totals = {r: 0 for r in SKIP_REASONS}
     totals.update({row["reason"]: int(row["n"]) for row in rows})
     return totals
