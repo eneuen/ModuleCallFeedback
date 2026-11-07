@@ -70,6 +70,7 @@ final class FollowUpsTest extends TestCase
         self::assertSame([1 => 6], $list['rows'][0]['answers']);
         self::assertSame('5550000100', $list['rows'][0]['caller_num']);
         self::assertSame(ScalePresets::NPS, $list['rows'][0]['scale']);
+        self::assertSame([1 => ScalePresets::NPS, 2 => ScalePresets::YES_NO], $list['rows'][0]['scales'], 'So the page can show yes or no.');
     }
 
     public function testResolvingRecordsWhenAndWhoAndReopeningClearsIt(): void

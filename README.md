@@ -124,6 +124,7 @@ To change the questions or prompts of a live survey, create a new version: activ
 - **Not every caller can be asked.** Callers who hang up before the agent, and calls the agent blind-transfers, are never surveyed. Scores therefore lean towards callers who stayed on the line; the response rate and Survey health show how many were reached.
 - **Routes belong to the survey, not to a version.** Changing the routes on a new draft also changes them for the live version as soon as you save.
 - **Results are per version.** Different wordings are never averaged together; pick the version in the results toolbar.
+- **"Don't ask again" covers every survey.** A number one survey has asked isn't asked by another survey either until that survey's own waiting time has passed, so nobody is surveyed twice in a row.
 - **Calls a rule skips are counted.** Calls left out because they were too short, outside the survey's hours, excluded, asked recently, not sampled or over the limit of surveys at once appear under Survey health.
 
 ## Privacy and data

@@ -86,9 +86,17 @@ final class FollowUps
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $answers = $this->db->prepare('SELECT position, value FROM m_SurveyAnswers WHERE session_id = ? ORDER BY position');
+        $questions = $this->db->prepare('SELECT position, scale FROM m_SurveyQuestions WHERE survey_id = ? ORDER BY position');
+        $scales = [];
         foreach ($rows as &$row) {
             $answers->execute([$row['session_id']]);
             $row['answers'] = array_map('intval', $answers->fetchAll(PDO::FETCH_KEY_PAIR));
+            // Each question's scale, so the page can show a yes/no answer as yes or no.
+            if (!isset($scales[$row['survey_id']])) {
+                $questions->execute([$row['survey_id']]);
+                $scales[$row['survey_id']] = array_map('strval', $questions->fetchAll(PDO::FETCH_KEY_PAIR));
+            }
+            $row['scales'] = $scales[$row['survey_id']];
             foreach (['id', 'session_id', 'survey_id', 'survey_version', 'created_at', 'ended_at'] as $field) {
                 $row[$field] = (int)$row[$field];
             }

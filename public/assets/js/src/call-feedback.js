@@ -146,17 +146,51 @@ const label = (pair) => t(pair[0], pair[1]);
 const scaleLabel = (s) => (SCALES[s] ? label(SCALES[s]) : s);
 const languageLabel = (l) => (LANGUAGES[l] ? label(LANGUAGES[l]) : l);
 const problemLabel = (key) => t(key, PROBLEMS[key] || key);
-const dateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString() : '—');
+/** The admin cabinet's language, which the page sets on <html>; dates and numbers follow it, not the browser's. */
+const LOCALE = document.documentElement.lang || undefined;
+const dateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(LOCALE) : '—');
 /** "6 Nov, 14:05": short enough for a table column. */
-const shortDateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
-const shortDate = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-const count = (n) => Number(n).toLocaleString();
+const shortDateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+const shortDate = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
+const count = (n) => Number(n).toLocaleString(LOCALE);
 const sub = (text, values) => Object.entries(values).reduce((s, [k, v]) => s.split(`{${k}}`).join(String(v)), text);
+
+/**
+ * A count in words: the label key with the language's plural form appended
+ * (cf_X_one, cf_X_few, cf_X_many, cf_X_other), falling back to _other.
+ */
+function plural(key, n, fallbacks, values = {}) {
+  const form = new Intl.PluralRules(LOCALE).select(n);
+  const text = (globalTranslate && (globalTranslate[`${key}_${form}`] || globalTranslate[`${key}_other`])) || fallbacks[form] || fallbacks.other;
+  return sub(text, { n: count(n), ...values });
+}
+
+/**
+ * Server messages an admin can reach through the page, as [pattern, label key, fallback]; {1} is the
+ * first captured value. Anything else is shown as sent (it only follows a tampered request).
+ */
+const SERVER_MESSAGES = [
+  [/^Not a valid email address: (.*)$/s, 'cf_ErrEmail', 'Not a valid email address: {1}'],
+  [/^Call-back prefixes are digits only and never start with 00: (.*)$/s, 'cf_ErrPrefix', 'Call-back prefixes are digits only and never start with 00: {1}'],
+  [/^Not a phone number: (.*)$/s, 'cf_ErrPhone', 'Not a phone number: {1}'],
+  [/^The name must be 1 to (\d+) characters\.$/, 'cf_ErrName', 'The name must be 1 to {1} characters.'],
+  [/^Set both a start and an end time, or neither\.$/, 'cf_ErrHours', 'Set both a start and an end time, or neither.'],
+  [/^Choose a range of up to (\d+) days\.$/, 'cf_ErrRange', 'Choose a range of up to {1} days.'],
+  [/^\S+ must be a whole number from (-?\d+) to (-?\d+)\.$/, 'cf_ErrWholeNumber', 'Enter a whole number from {1} to {2}.'],
+  [/^Up to (\d+) excluded numbers\.$/, 'cf_ErrMaxExclusions', 'Up to {1} excluded numbers.'],
+  [/^Up to (\d+) alert recipients\.$/, 'cf_ErrMaxRecipients', 'Up to {1} alert recipients.'],
+  [/^Up to (\d+) call-back prefixes\.$/, 'cf_ErrMaxPrefixes', 'Up to {1} call-back prefixes.'],
+];
 
 function failText(xhr, fallback) {
   const msg = xhr && xhr.responseJSON && xhr.responseJSON.message;
-  if (typeof msg === 'string' && msg !== '') return PROBLEMS[msg] ? problemLabel(msg) : msg;
-  return fallback;
+  if (typeof msg !== 'string' || msg === '') return fallback;
+  if (PROBLEMS[msg]) return problemLabel(msg);
+  for (const [pattern, key, text] of SERVER_MESSAGES) {
+    const m = msg.match(pattern);
+    if (m) return m.slice(1).reduce((out, v, i) => out.split(`{${i + 1}}`).join(v), t(key, text));
+  }
+  return msg;
 }
 
 function showError(text) {
@@ -331,8 +365,10 @@ function surveyRow(versions) {
     : el('div', { class: 'cf-route-labels' }, s.targets.map((tg) => el('span', {
       class: 'ui small basic label', title: routeText(tg.direction, tg.route_id),
     }, el('i', { class: `${tg.direction === 'in' ? 'sign in alternate' : 'sign out alternate'} icon` }), routeShort(tg.direction, tg.route_id))));
-  const readiness = s.status !== 'draft' ? null : el('div', { class: `cf-sub-line${s.problems ? '' : ' cf-ready'}`,
-    text: s.problems ? sub(t('cf_ThingsToFix', '{n} thing(s) to fix'), { n: s.problems }) : t('cf_ReadyToActivate', 'Ready to activate') });
+  const idle = s.status === 'active' && s.targets.length === 0
+    ? el('div', { class: 'cf-sub-line cf-warn', text: t('cf_NotRunning', 'Not running: no routes') }) : null;
+  const readiness = s.status !== 'draft' ? idle : el('div', { class: `cf-sub-line${s.problems ? '' : ' cf-ready'}`,
+    text: s.problems ? plural('cf_ThingsToFix', s.problems, { one: '{n} thing to fix', other: '{n} things to fix' }) : t('cf_ReadyToActivate', 'Ready to activate') });
   return el('tr', { class: 'cf-clickable', onclick: () => openEditor(s.id) },
     el('td', {}, el('a', { href: '#', text: s.name, onclick: (e) => e.preventDefault() }),
       el('div', { class: 'cf-sub-line', text: [metricName(s.scale), languageLabel(s.language), sub(t('cf_VersionN', 'Version {n}'), { n: s.version })].join(' · ') }),
@@ -518,6 +554,9 @@ function renderEditor(data) {
   const archived = s.status === 'archived';
   const result = el('div', { id: 'cf-editor-result' });
   const targetKeys = new Set(data.targets.map((tg) => `${tg.direction}:${tg.route_id}`));
+  const noRoutes = active && data.targets.length === 0
+    ? el('div', { class: 'ui warning message', text: t('cf_ActiveNoRoutes', 'This survey is active but runs on no routes, so no caller is asked. Choose routes under Runs On, or stop it.') })
+    : null;
   const lockedNote = active
     ? el('div', { class: 'ui info message', text: t('cf_ActiveLocked', 'This version is live: its questions and prompts are fixed so results stay comparable. Rules and routes can still change. To change the wording, create a new version.') })
     : null;
@@ -614,13 +653,13 @@ function renderEditor(data) {
       el('h3', { class: 'ui header', text: `${s.name} · ${t('cf_VersionShort', 'v')}${s.version}` }),
       statusLabel(s.status),
       headActions),
-    versions, problemsBox(data), lockedNote, form, archived ? null : testCallPanel(data), result, actions);
+    versions, problemsBox(data), noRoutes, lockedNote, form, archived ? null : testCallPanel(data), result, actions);
 }
 
 const activateHint = (data) => {
   if (state.dirty) return t('cf_SaveFirst', 'Save your changes first: test calls and activation use the saved version.');
   return data.problems.length
-    ? sub(t('cf_ActivateBlocked', '{n} thing(s) to fix before activating: see the list at the top.'), { n: data.problems.length })
+    ? plural('cf_ActivateBlocked', data.problems.length, { one: '{n} thing to fix before activating: see the list at the top.', other: '{n} things to fix before activating: see the list at the top.' })
     : t('cf_ActivateReady', 'Ready to go live.');
 };
 
@@ -665,6 +704,9 @@ function testCallList(data) {
           : Object.keys(c.answers).sort().map((pos) => `${t('cf_Q', 'Q')}${pos}: ${answerText(questions[pos], c.answers[pos])}`).join(' · ') })))));
 }
 
+/** A follow-up's answer to one question, with yes/no shown as words. */
+const followAnswer = (f, pos) => answerText({ scale: (f.scales || {})[pos] }, f.answers[pos]);
+
 function answerText(question, value) {
   if (question && question.scale === 'yesno') return value === 1 ? t('cf_Yes', 'yes') : t('cf_No', 'no');
   return String(value);
@@ -704,6 +746,7 @@ function testCallPanel(data) {
           if ((fresh.testCalls.length && fresh.testCalls[0].id !== before) || tries > 36) {
             clearInterval(state.testPoll);
             if (tries <= 36) message(result, 'positive', t('cf_TestRecorded', 'Test call recorded.'));
+            else message(result, 'warning', t('cf_TestNotSeen', 'No test call has been recorded after 3 minutes. If the phone didn\'t ring, check that the extension is registered; if it rang, press Refresh, and if nothing shows, check that the module is enabled.'));
           }
         });
       }, 5000);
@@ -763,10 +806,18 @@ function saveEditor(result) {
 }
 
 /** A survey action (activate, archive, new version, duplicate); `follow` opens the returned version. */
+/** What each survey action did, for the message after it. */
+const ACT_DONE = {
+  activateSurvey: ['cf_DoneActivate', 'Activated. Calls on its routes are surveyed within a few seconds.'],
+  archiveSurvey: ['cf_DoneArchive', 'Archived. It no longer runs, and its results are kept.'],
+  newVersion: ['cf_DoneNewVersion', 'This is the new draft version. Change it, place a test call, then activate it to replace the live version.'],
+  duplicateSurvey: ['cf_DoneDuplicate', 'This is the copy, as a new draft survey with no routes.'],
+};
+
 function act(action, id, result, follow = false) {
   post(action, { id })
     .then((r) => openEditor(follow && r && r.id ? r.id : id, true))
-    .then(() => message($id('cf-editor-result'), 'positive', t('cf_Done', 'Done.')),
+    .then(() => message($id('cf-editor-result'), 'positive', ACT_DONE[action] ? label(ACT_DONE[action]) : t('cf_Done', 'Done.')),
       (xhr) => message(result, 'negative', saveFailed(xhr)));
 }
 
@@ -864,7 +915,7 @@ function loadSettings() {
           el('tbody', {}, data.exclusions.map((x) => el('tr', {},
             el('td', { text: x.number }),
             el('td', { class: 'cf-muted', text: x.note || '' }),
-            el('td', { class: 'cf-muted cf-nowrap', text: x.created_at ? new Date(x.created_at * 1000).toLocaleDateString() : '' }),
+            el('td', { class: 'cf-muted cf-nowrap', text: x.created_at ? new Date(x.created_at * 1000).toLocaleDateString(LOCALE) : '' }),
             el('td', { class: 'cf-num' }, el('button', { class: 'ui basic mini button', type: 'button', text: t('cf_Remove', 'Remove'),
               onclick: () => post('removeExclusion', { id: x.id }).then(() => loadSettings(),
                 (xhr) => message(exclusionsResult, 'negative', saveFailed(xhr))) }))))))));
@@ -884,7 +935,9 @@ function loadSettings() {
         if (!number) return;
         confirmDialog(sub(t('cf_ConfirmForget', 'Delete every survey answer and follow-up for {number}? This can\'t be undone.'), { number }), t('cf_Delete', 'Delete'))
           .then((ok) => ok && post('forgetNumber', { number })
-            .then((r) => { $id('cf-forget-number').value = ''; message(forgetResult, 'positive', sub(t('cf_Forgotten', 'Deleted {n} survey session(s) for that number.'), { n: r.sessions })); },
+            .then((r) => { $id('cf-forget-number').value = ''; message(forgetResult, 'positive', r.sessions
+              ? plural('cf_Forgotten', r.sessions, { one: 'Deleted {n} survey for that number.', other: 'Deleted {n} surveys for that number.' })
+              : t('cf_ForgottenNone', 'No survey data was found for that number.')); },
               (xhr) => message(forgetResult, 'negative', saveFailed(xhr))));
       } },
       el('div', { class: 'fields' },
@@ -905,7 +958,7 @@ const esc = (v) => echarts.format.encodeHTML(String(v));
 const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 /** Percentages and scores as whole numbers, averages with one decimal, everywhere on the page. */
 const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v)}%`);
-const avg = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+const avg = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
 
 function applyPreset() {
   const preset = $id('cf-preset').value;
@@ -1043,9 +1096,10 @@ function renderTrend(o) {
   const points = o.trend.points;
   const scale = o.survey.scale;
   const weekly = o.trend.interval === 'week';
-  $id('cf-trend-interval').textContent = weekly ? t('cf_ByWeek', 'by week') : t('cf_ByDay', 'by day');
   const c = chart('cf-chart-trend');
-  if (!points.some((p) => p.responses > 0)) {
+  const hasResponses = points.some((p) => p.responses > 0);
+  $id('cf-trend-interval').textContent = !hasResponses ? '' : (weekly ? t('cf_ByWeek', 'by week') : t('cf_ByDay', 'by day'));
+  if (!hasResponses) {
     showChartMessage(c, t('cf_NoResponses', 'No responses in this period.'));
     return;
   }
@@ -1242,6 +1296,8 @@ function loadVersions() {
 }
 
 function refreshResults() {
+  // A new query replaces any earlier error, such as a date range that was too long.
+  clearError();
   if (state.tab === 'overview') loadOverview();
   if (state.tab === 'breakdowns') loadBreakdown();
   if (state.tab === 'health') loadHealth();
@@ -1298,7 +1354,7 @@ function loadFollowUps(page = 1) {
       return;
     }
     const rows = data.rows.map((f) => {
-      const others = Object.keys(f.answers).filter((pos) => pos !== '1').sort().map((pos) => `${t('cf_Q', 'Q')}${pos}: ${f.answers[pos]}`).join(' · ');
+      const others = Object.keys(f.answers).filter((pos) => pos !== '1').sort().map((pos) => `${t('cf_Q', 'Q')}${pos}: ${followAnswer(f, pos)}`).join(' · ');
       const who = [f.agent ? nameOf('agent', f.agent) : '', f.queue ? nameOf('queue', f.queue) : ''].filter(Boolean).join(' · ');
       return el('tr', {},
         el('td', {}, el('div', { class: 'cf-nowrap', text: shortDateTime(f.ended_at) }), el('div', { class: 'cf-sub-line', text: `${f.survey_name} · ${t('cf_VersionShort', 'v')}${f.survey_version}` })),
@@ -1356,7 +1412,7 @@ function openFollowUp(f, page, focusCallBack) {
   state.followUp = { f, page };
   const fact = (term, value) => (value ? [el('dt', { text: term }), el('dd', { text: value })] : null);
   const answers = Object.keys(f.answers).sort().map((pos) => (pos === '1'
-    ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t('cf_Q', 'Q')}${pos}: ${f.answers[pos]}`)).join(' · ');
+    ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t('cf_Q', 'Q')}${pos}: ${followAnswer(f, pos)}`)).join(' · ');
   const statusResult = el('div', { id: 'cf-modal-result' });
   $id('cf-modal-title').textContent = sub(t('cf_FollowUpTitle', 'Follow-Up: {caller}'), { caller: f.caller_num || t('cf_Withheld', 'Withheld') });
   fill($id('cf-modal-content'),

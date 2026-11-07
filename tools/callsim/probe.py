@@ -393,6 +393,8 @@ def in_excluded(lines):
           "call is surveyed, the second is not and is counted as capped.", skipped("capped", surveyed_first=True))
 def in_capped(lines):
     c, a = lines["carrier"], lines["301"]
+    # The "don't ask again" memory is shared by every survey, so forget any earlier call from this number first.
+    docker("exec", PBX_CONTAINER, "asterisk", "-rx", f"database del call-feedback-cap {CALLER}", capture=True)
     with survey_rules(frequency_cap_days=1):
         for keys in (True, False):
             c.dial(DID_DIRECT); a.ringing(); pause(2); a.answer(); c.established(); pause(6); a.hangup()

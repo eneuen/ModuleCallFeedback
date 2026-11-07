@@ -160,6 +160,15 @@
 .cf-page .cf-inline-form { margin-bottom: var(--cf-space-4); }
 .cf-page .cf-form-buttons { display: flex !important; align-items: flex-end; gap: var(--cf-space-2); }
 .cf-page .cf-sub-line.cf-ready { color: var(--cf-good); }
+.cf-page .cf-sub-line.cf-warn { color: var(--cf-warn); }
+
+/* Phones: Semantic stacks table rows, so the column headings would stack into a list of their own;
+   the status filter wraps instead of running off the screen. */
+@media (max-width: 767px) {
+    .cf-page table.cf-table.ui.table thead { display: none !important; }
+    .cf-page .cf-filter.ui.buttons { flex-wrap: wrap; }
+    .cf-page .cf-section-head { flex-wrap: wrap; }
+}
 .cf-page .cf-other-versions a, .cf-page .cf-version-links a { white-space: nowrap; }
 .cf-page .cf-version-links { color: var(--cf-muted); font-size: .9em; margin: calc(-1 * var(--cf-space-2)) 0 var(--cf-space-4); }
 .cf-page #cf-surveys td:first-child { min-width: 15em; }
