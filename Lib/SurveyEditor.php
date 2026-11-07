@@ -347,10 +347,8 @@ final class SurveyEditor
         }
         $clean = [];
         foreach ($numbers as $number) {
-            $digits = preg_replace('/[^0-9]/', '', (string)$number);
-            if ($digits === '' || strlen($digits) > 20) {
-                throw new InvalidArgumentException('Not a phone number: ' . mb_substr((string)$number, 0, 40));
-            }
+            $digits = Privacy::digits(trim((string)$number))
+                ?? throw new InvalidArgumentException('Not a phone number: ' . mb_substr((string)$number, 0, 40));
             $clean[$digits] = true;
         }
         $note = trim(preg_replace('/[\x00-\x1F\x7F]/u', ' ', $note) ?? '');

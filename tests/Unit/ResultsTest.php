@@ -215,6 +215,8 @@ final class ResultsTest extends TestCase
         yield 'too long' => [['from' => '2024-01-01']];
         yield 'unknown direction' => [['direction' => 'internal']];
         yield 'injection' => [['survey' => '1 OR 1=1']];
+        yield 'NUL byte in a date' => [['from' => "2026-11-01\0"]];
+        yield 'date with a time' => [['to' => '2026-11-08 10:00']];
     }
 
     #[DataProvider('badQueries')]

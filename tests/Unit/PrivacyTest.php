@@ -112,4 +112,13 @@ final class PrivacyTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->privacy->forgetNumber('anonymous');
     }
+
+    public function testPhoneNumbersAreDigitsOrRefused(): void
+    {
+        self::assertSame('15550100100', Privacy::digits('+1 (555) 010-0100'));
+        self::assertSame('5550000100', Privacy::digits(' 555.000.0100 '));
+        foreach (['', '+', '1e9', '1 OR 1=1', '${SHELL(id)}', "555\n0100", str_repeat('1', 21)] as $bad) {
+            self::assertNull(Privacy::digits($bad), "Accepted '$bad'");
+        }
+    }
 }

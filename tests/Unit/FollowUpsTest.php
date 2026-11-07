@@ -107,14 +107,15 @@ final class FollowUpsTest extends TestCase
 
     public function testTheAlertNeverCarriesTheCallersNumber(): void
     {
-        $message = AlertMessage::build('en-en', "Support\r\nBcc: x@example.com", ScalePresets::NPS, 3, '301', Surveys::NOW);
+        $link = 'https://pbx.example.com/admin-cabinet/module-call-feedback/index?tab=followups';
+        $message = AlertMessage::build('en-en', "Support\r\nBcc: x@example.com", ScalePresets::NPS, 3, '301', Surveys::NOW, $link, "Ann\nLee");
 
         self::assertSame('Call Feedback: a caller gave a low score', $message['subject']);
         self::assertStringContainsString('Survey: Support Bcc: x@example.com', $message['body'], 'Line breaks are removed.');
         self::assertStringContainsString('Score: 3 (0–10)', $message['body']);
-        self::assertStringContainsString('Agent: 301', $message['body']);
-        self::assertStringContainsString(AlertMessage::PAGE_PATH, $message['body']);
+        self::assertStringContainsString('Agent: Ann Lee (301)', $message['body'], 'The name, on one line.');
+        self::assertStringContainsString($link, $message['body'], 'A full address the mail program can open.');
         self::assertStringNotContainsString('5550000100', $message['body']);
-        self::assertStringStartsWith('Оценка звонков', AlertMessage::build('ru-ru', 'Опрос', ScalePresets::CSAT, 1, null, Surveys::NOW)['subject']);
+        self::assertStringStartsWith('Оценка звонков', AlertMessage::build('ru-ru', 'Опрос', ScalePresets::CSAT, 1, null, Surveys::NOW, $link)['subject']);
     }
 }

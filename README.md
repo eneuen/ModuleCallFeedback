@@ -125,7 +125,12 @@ To change the questions or prompts of a live survey, create a new version: activ
 - **Routes belong to the survey, not to a version.** Changing the routes on a new draft also changes them for the live version as soon as you save.
 - **Results are per version.** Different wordings are never averaged together; pick the version in the results toolbar.
 - **"Don't ask again" covers every survey.** A number one survey has asked isn't asked by another survey either until that survey's own waiting time has passed, so nobody is surveyed twice in a row.
+- **Callers answer with their keypad, as in an IVR menu.** If keys work in your IVR menus, they work in the survey: the survey reads them the same way.
 - **Calls a rule skips are counted.** Calls left out because they were too short, outside the survey's hours, excluded, asked recently, not sampled or over the limit of surveys at once appear under Survey health.
+
+## Tested limits
+
+Benchmarked for a busy small office: 200 surveyed calls a day for a year, on 2 CPUs, within the admin cabinet's 128 MB PHP memory limit. The Overview of a whole year takes about 0.16 s, every other page less, and PHP needs at most 10 MB. At 1,000 a day, a year's Overview takes under a second. Details and method: [tools/benchmark](tools/benchmark/README.md).
 
 ## Privacy and data
 
@@ -142,6 +147,8 @@ To change the questions or prompts of a live survey, create a new version: activ
 - **Call-backs can't be turned against you.** A caller can fake an international or premium-rate number and wait to be called back. Only numbers that start with a prefix you list in Settings are called back in one click; any other number has to be typed in to match. Call-backs go through your outgoing routes and their restrictions, and each one is logged with who placed it.
 
 See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
+The checks run before a release (access by every kind of user, hostile caller IDs, tampered requests, reaching the survey from a phone or trunk, holding the line, many surveys at once, and a clean uninstall) and their results are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

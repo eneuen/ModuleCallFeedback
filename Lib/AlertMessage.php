@@ -19,7 +19,11 @@ namespace Modules\ModuleCallFeedback\Lib;
  */
 final class AlertMessage
 {
+    /** The module page's path; the worker turns it into the PBX's full address (LanInterfaces::buildAdminUrl()). */
     public const string PAGE_PATH = '/admin-cabinet/module-call-feedback/index?tab=followups';
+
+    /** The Overview's path, for the summary email. */
+    public const string OVERVIEW_PATH = '/admin-cabinet/module-call-feedback/index';
 
     private const array TEXT = [
         'en' => [
@@ -47,7 +51,8 @@ final class AlertMessage
     /**
      * @return array{subject: string, body: string}
      */
-    public static function build(string $pbxLanguage, string $surveyName, string $scale, int $score, ?string $agent, int $endedAt): array
+    public static function build(string $pbxLanguage, string $surveyName, string $scale, int $score, ?string $agent, int $endedAt,
+        string $link, ?string $agentName = null): array
     {
         $text = self::TEXT[str_starts_with($pbxLanguage, 'ru') ? 'ru' : 'en'];
         $name = trim(preg_replace('/[\r\n\t\x00-\x1F\x7F]+/u', ' ', $surveyName) ?? '');
@@ -58,12 +63,13 @@ final class AlertMessage
             "{$text['score']}: $score (" . (self::SCALE_RANGE[$scale] ?? '') . ')',
         ];
         if ($agent !== null && preg_match('/^[0-9]{1,12}$/', $agent)) {
-            $lines[] = "{$text['agent']}: $agent";
+            $agentName = mb_substr(trim(preg_replace('/[\r\n\t\x00-\x1F\x7F]+/u', ' ', (string)$agentName) ?? ''), 0, 60);
+            $lines[] = "{$text['agent']}: " . ($agentName === '' ? $agent : "$agentName ($agent)");
         }
         $lines[] = "{$text['time']}: " . date('Y-m-d H:i', $endedAt);
         $lines[] = '';
         $lines[] = $text['open'];
-        $lines[] = self::PAGE_PATH;
+        $lines[] = $link;
 
         return ['subject' => $text['subject'], 'body' => implode("\n", $lines) . "\n"];
     }

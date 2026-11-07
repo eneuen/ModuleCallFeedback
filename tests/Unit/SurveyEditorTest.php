@@ -274,7 +274,13 @@ final class SurveyEditorTest extends TestCase
         self::assertSame(2, $this->editor->addExclusions("+1 (555) 010-0100\n5550000100, 5550000100", 'Staff', Surveys::NOW));
         self::assertSame(['15550100100', '5550000100'], $this->repository->exclusions());
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->editor->addExclusions(['no digits here'], '', Surveys::NOW);
+        foreach (['no digits here', '1e9', '1 OR 1=1', '5550000100x', '+'] as $typo) {
+            try {
+                $this->editor->addExclusions([$typo], '', Surveys::NOW);
+                self::fail("Accepted '$typo'");
+            } catch (InvalidArgumentException) {
+                self::assertCount(2, $this->repository->exclusions(), 'A typo is refused, not turned into another number.');
+            }
+        }
     }
 }

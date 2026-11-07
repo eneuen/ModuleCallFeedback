@@ -14,6 +14,7 @@ use MikoPBX\Modules\Setup\PbxExtensionSetupBase;
 use Modules\ModuleCallFeedback\Lib\CdrReader;
 use Modules\ModuleCallFeedback\Lib\DialplanBuilder;
 use Modules\ModuleCallFeedback\Lib\ExampleSurvey;
+use Modules\ModuleCallFeedback\Lib\Migrations;
 use PDO;
 use Throwable;
 
@@ -66,21 +67,34 @@ class PbxExtensionSetup extends PbxExtensionSetupBase
     }
 
     /**
-     * Also creates the example survey on a new module database (ExampleSurvey
-     * decides; an update or a kept database is left as it is). The core
-     * restores a kept database in installFiles(), before this runs. A failure
-     * here is logged and never stops the install.
+     * After the core creates or extends the tables: brings the database up to
+     * the current schema (Migrations), then creates the example survey on a
+     * new module database (ExampleSurvey decides; an update or a kept database
+     * is left as it is). The core restores a kept database in installFiles(),
+     * before this runs. A failed database update stops the install; a failed
+     * example survey is only logged.
      */
     public function installDB(): bool
     {
+        $file = $this->moduleDir . '/db/module.db';
+        // On an update the core has already restored the kept database (installFiles()), so only a new install has none yet.
+        $fresh = !is_file($file);
         if (!parent::installDB()) {
             return false;
         }
+        $module = new PDO('sqlite:' . $file, null, null, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
         try {
-            $module = new PDO('sqlite:' . $this->moduleDir . '/db/module.db', null, null, [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            ]);
+            Migrations::run($module, $fresh);
+        } catch (Throwable $e) {
+            // Stop rather than run on a half-changed database; the step was rolled back.
+            SystemMessages::sysLogMsg(static::class, 'Database update failed: ' . $e->getMessage(), LOG_ERR);
+            $this->messages[] = 'Call Feedback could not update its database: ' . $e->getMessage();
+            return false;
+        }
+        try {
             $config = CdrReader::openReadOnly((string)$this->di->getShared('config')->path('database.dbfile'));
             ExampleSurvey::createOnce($module, $config, (string)PbxSettings::getValueByKey(PbxSettings::PBX_LANGUAGE), time());
         } catch (Throwable $e) {

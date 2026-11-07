@@ -25,6 +25,22 @@ use PDO;
  */
 final class Privacy
 {
+    /**
+     * A phone number as typed by an admin, reduced to its digits: "+1 (555) 010-0100"
+     * gives 15550100100. Only digits, spaces, a leading + and the usual separators
+     * are accepted, so a typo such as "1e9" is refused rather than turned into
+     * another number.
+     */
+    public static function digits(string $number): ?string
+    {
+        if (preg_match('/^\s*\+?[0-9][0-9 ().\-]*$/', $number) !== 1) {
+            return null;
+        }
+        $digits = preg_replace('/[^0-9]/', '', $number) ?? '';
+
+        return $digits === '' || strlen($digits) > 20 ? null : $digits;
+    }
+
     /** Below this many days the PBX keeps its call history forever. */
     public const int UNLIMITED_BELOW_DAYS = 30;
 
@@ -110,10 +126,7 @@ final class Privacy
      */
     public function forgetNumber(string $number): array
     {
-        $digits = preg_replace('/[^0-9]/', '', $number) ?? '';
-        if ($digits === '' || strlen($digits) > 20) {
-            throw new InvalidArgumentException('Not a phone number.');
-        }
+        $digits = self::digits($number) ?? throw new InvalidArgumentException('Not a phone number: ' . mb_substr($number, 0, 40));
         $this->db->beginTransaction();
         try {
             $ids = $this->db->prepare('SELECT id FROM ' . FeedbackStore::SESSIONS . " WHERE REPLACE(caller_num, '+', '') = ?");

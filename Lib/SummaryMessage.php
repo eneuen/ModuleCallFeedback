@@ -21,10 +21,9 @@ final class SummaryMessage
             'subject_daily'  => 'Call Feedback: daily summary',
             'subject_weekly' => 'Call Feedback: weekly summary',
             'period'         => 'Period',
-            'score'          => 'score',
             'responses'      => 'responses',
             'response_rate'  => 'response rate',
-            'too_few'        => 'not enough responses yet',
+            'too_few'        => 'too few for a score',
             'none'           => 'No active surveys.',
             'open'           => 'Open follow-ups',
             'more'           => 'Details: Call Feedback in the PBX web interface',
@@ -33,10 +32,9 @@ final class SummaryMessage
             'subject_daily'  => 'Оценка звонков: сводка за день',
             'subject_weekly' => 'Оценка звонков: сводка за неделю',
             'period'         => 'Период',
-            'score'          => 'оценка',
             'responses'      => 'ответов',
             'response_rate'  => 'доля ответивших',
-            'too_few'        => 'пока мало ответов',
+            'too_few'        => 'мало для оценки',
             'none'           => 'Активных опросов нет.',
             'open'           => 'Открытых обращений',
             'more'           => 'Подробнее: «Оценка звонков» в веб-интерфейсе АТС',
@@ -48,7 +46,7 @@ final class SummaryMessage
      *
      * @return array{subject: string, body: string}
      */
-    public static function build(string $pbxLanguage, bool $weekly, string $from, string $to, array $overviews, int $openFollowUps): array
+    public static function build(string $pbxLanguage, bool $weekly, string $from, string $to, array $overviews, int $openFollowUps, string $link): array
     {
         $text = self::TEXT[str_starts_with($pbxLanguage, 'ru') ? 'ru' : 'en'];
         $lines = ["{$text['period']}: " . ($from === $to ? $from : "$from – $to"), ''];
@@ -57,24 +55,28 @@ final class SummaryMessage
         }
         foreach ($overviews as $o) {
             $name = trim(preg_replace('/[\r\n\t\x00-\x1F\x7F]+/u', ' ', (string)$o['survey']['name']) ?? '');
-            $score = $o['score']['responses'] < $o['min_sample'] || $o['score']['score'] === null
-                ? $text['too_few']
-                : self::scoreText((string)$o['survey']['scale'], (float)$o['score']['score']);
-            $rate = $o['response_rate'] === null ? '—' : $o['response_rate'] . '%';
-            $lines[] = "$name (v{$o['survey']['version']}): {$text['score']} $score, {$o['score']['responses']} {$text['responses']}, {$text['response_rate']} $rate";
+            $responses = "{$o['score']['responses']} {$text['responses']}";
+            if ($o['score']['responses'] < $o['min_sample'] || $o['score']['score'] === null) {
+                $lines[] = "$name (v{$o['survey']['version']}): $responses, {$text['too_few']}";
+                continue;
+            }
+            // Whole numbers, as on the page.
+            $rate = $o['response_rate'] === null ? '—' : round((float)$o['response_rate']) . '%';
+            $score = self::scoreText((string)$o['survey']['scale'], (float)$o['score']['score']);
+            $lines[] = "$name (v{$o['survey']['version']}): $score, $responses, {$text['response_rate']} $rate";
         }
         $lines[] = '';
         $lines[] = "{$text['open']}: $openFollowUps";
         $lines[] = '';
         $lines[] = $text['more'];
-        $lines[] = AlertMessage::PAGE_PATH;
+        $lines[] = $link;
 
         return ['subject' => $text[$weekly ? 'subject_weekly' : 'subject_daily'], 'body' => implode("\n", $lines) . "\n"];
     }
 
     private static function scoreText(string $scale, float $score): string
     {
-        $value = rtrim(rtrim(number_format($score, 1, '.', ''), '0'), '.');
+        $value = (string)(int)round($score);
 
         return match ($scale) {
             ScalePresets::NPS => 'NPS ' . ($score > 0 ? '+' : '') . $value,

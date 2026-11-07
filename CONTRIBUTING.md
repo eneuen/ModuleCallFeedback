@@ -65,6 +65,12 @@ The recordings are CC0 (`Sounds/LICENSE`); a contribution to them must be too.
 
 The unit tests run against SQLite files built from the module's model annotations and from calls recorded on a real PBX (`tests/fixtures/cdr`). [tools/callsim](tools/callsim/README.md) places real SIP calls through a disposable MikoPBX test instance with softphones and a fake carrier; its `probe.py` runs the survey scenarios (inbound, outbound, transfers, rules, test calls, call-backs) and checks both the dialplan's decisions and what the worker stored.
 
+## Changing the database
+
+The core creates the module's tables from the model annotations in `Models/` on install, and adds new columns on update. It doesn't reliably change an existing table's indexes or move data, so a change like that goes into `Lib/Migrations.php` as the next numbered step, with `LATEST` raised to match and a unit test that upgrades a database from the previous version. The installer runs the steps after the core has restored the kept database, each once, in order and in a transaction; a failed step stops the install. A new database starts at `LATEST`. Version 1 is the first release's schema.
+
+Before a release, run the load benchmark ([tools/benchmark](tools/benchmark/README.md)) if the results queries changed.
+
 ## Layout
 
 | Path | What it holds |
@@ -84,6 +90,7 @@ The unit tests run against SQLite files built from the module's model annotation
 | `Lib/Results.php` | Overview, Breakdowns and Survey health |
 | `Lib/FollowUps.php`, `Lib/CallBacks.php`, `Lib/AlertMessage.php`, `Lib/SummaryMessage.php` | Detractor cases, call-backs with their safeguards, alert and summary emails |
 | `Lib/Privacy.php` | Retention of callers' numbers and "delete all data for a number" |
+| `Lib/Migrations.php` | Numbered changes to the module database between versions, and the version it has reached |
 | `Lib/ModuleSettings.php`, `Lib/ConfigOptions.php` | Module settings; what the editor can choose from the PBX configuration |
 | `Lib/AccessPolicy.php` | Who may use the module, and what a write request must carry |
 | `Models/` | Tables in the module's database |
@@ -97,6 +104,7 @@ The unit tests run against SQLite files built from the module's model annotation
 | `tests/fixtures/` | CDR legs recorded from real calls, and the production `cdr_general` schema |
 | `tools/callsim/` | Real-call test harness and the survey probe scenarios |
 | `tools/check-banned.php` | Fails the build if shipped code uses a banned function |
+| `tools/benchmark/` | Load benchmark: a year of synthetic surveys, timed with the page's own queries |
 | `tools/phpstan/` | PHPStan setup against the MikoPBX core |
 | `.gitattributes` | Lists the development files that are left out of every release |
 

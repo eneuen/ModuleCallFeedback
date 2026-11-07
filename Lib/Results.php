@@ -68,22 +68,39 @@ final class Results
     public function overview(array $q): array
     {
         [$survey, $from, $to, $direction] = $this->params($q);
-        $sessions = $this->sessions($survey['id'], $from, $to, $direction);
         [$prevFrom, $prevTo] = self::previousPeriod($from, $to);
-        $previous = $this->sessions($survey['id'], $prevFrom, $prevTo, $direction);
         $headline = $survey['questions'][1]['scale'];
-
-        $counted = array_filter($sessions, fn (array $s): bool => !$s['excluded']);
-        $started = array_filter($counted, fn (array $s): bool => $s['status'] !== 'offered');
-        $completed = array_filter($counted, fn (array $s): bool => $s['status'] === 'completed');
-        $score = Scores::summary($headline, self::answers($counted, 1));
-        $previousScore = Scores::summary($headline, self::answers(array_filter($previous, fn (array $s): bool => !$s['excluded']), 1));
-
-        $resolution = null;
+        $resolutionAt = null;
         foreach ($survey['questions'] as $position => $question) {
             if ($position > 1 && $question['scale'] === ScalePresets::YES_NO) {
-                $resolution = Scores::summary(ScalePresets::YES_NO, self::answers($counted, $position)) + ['position' => $position];
+                $resolutionAt = $position;
                 break;
+            }
+        }
+
+        // One pass over the period, keeping counts and answer values only.
+        $total = $counted = $started = $completed = 0;
+        $values = $resolutionValues = $byDay = [];
+        foreach ($this->sessions($survey['id'], $from, $to, $direction) as $s) {
+            $total++;
+            if ($s['excluded']) {
+                continue;
+            }
+            $counted++;
+            $started += $s['status'] !== 'offered' ? 1 : 0;
+            $completed += $s['status'] === 'completed' ? 1 : 0;
+            if (isset($s['answers'][1])) {
+                $values[] = $s['answers'][1];
+                $byDay[date('Y-m-d', $s['ended_at'])][] = $s['answers'][1];
+            }
+            if ($resolutionAt !== null && isset($s['answers'][$resolutionAt])) {
+                $resolutionValues[] = $s['answers'][$resolutionAt];
+            }
+        }
+        $previousValues = [];
+        foreach ($this->sessions($survey['id'], $prevFrom, $prevTo, $direction) as $s) {
+            if (!$s['excluded'] && isset($s['answers'][1])) {
+                $previousValues[] = $s['answers'][1];
             }
         }
 
@@ -92,16 +109,18 @@ final class Results
             'from'            => $from->format('Y-m-d'),
             'to'              => $to->format('Y-m-d'),
             'min_sample'      => $this->minSample,
-            'score'           => $score,
-            'previous'        => ['from' => $prevFrom->format('Y-m-d'), 'to' => $prevTo->format('Y-m-d'), 'score' => $previousScore],
-            'resolution'      => $resolution,
-            'offered'         => count($counted),
-            'started'         => count($started),
-            'completed'       => count($completed),
-            'excluded'        => count($sessions) - count($counted),
-            'response_rate'   => self::percent(count($started), count($counted)),
-            'completion_rate' => self::percent(count($completed), count($started)),
-            'trend'           => $this->trend($headline, $counted, $from, $to),
+            'score'           => Scores::summary($headline, $values),
+            'previous'        => ['from' => $prevFrom->format('Y-m-d'), 'to' => $prevTo->format('Y-m-d'),
+                'score' => Scores::summary($headline, $previousValues)],
+            'resolution'      => $resolutionAt === null ? null
+                : Scores::summary(ScalePresets::YES_NO, $resolutionValues) + ['position' => $resolutionAt],
+            'offered'         => $counted,
+            'started'         => $started,
+            'completed'       => $completed,
+            'excluded'        => $total - $counted,
+            'response_rate'   => self::percent($started, $counted),
+            'completion_rate' => self::percent($completed, $started),
+            'trend'           => $this->trend($headline, $byDay, count($values), $from, $to),
             'followups'       => $this->followUps($survey['id'], $from, $to, $direction),
             'skipped'         => $this->skipped($survey['id'], $from, $to, $direction),
         ];
@@ -169,33 +188,39 @@ final class Results
     public function health(array $q): array
     {
         [$survey, $from, $to, $direction] = $this->params($q);
-        $sessions = $this->sessions($survey['id'], $from, $to, $direction);
-        $counted = array_values(array_filter($sessions, fn (array $s): bool => !$s['excluded']));
         $skipped = $this->skipped($survey['id'], $from, $to, $direction);
-        $excluded = count($sessions) - count($counted);
-
         $positions = array_keys($survey['questions']);
         sort($positions);
-        // How many questions each caller got through: the index of their last answer.
+
+        // One pass: how many questions each caller got through (the index of
+        // their last answer), and how many answered each question.
+        $total = $counted = 0;
         $progress = array_fill(0, count($positions) + 1, 0);
-        foreach ($counted as $s) {
+        $answered = array_fill_keys($positions, 0);
+        foreach ($this->sessions($survey['id'], $from, $to, $direction) as $s) {
+            $total++;
+            if ($s['excluded']) {
+                continue;
+            }
+            $counted++;
             $last = 0;
             foreach ($positions as $i => $position) {
                 if (isset($s['answers'][$position])) {
                     $last = $i + 1;
+                    $answered[$position]++;
                 }
             }
             $progress[$last]++;
         }
         $questions = [];
-        $reached = count($counted);
+        $reached = $counted;
         foreach ($positions as $i => $position) {
             $left = $progress[$i];
             $questions[] = [
                 'position' => $position,
                 'scale'    => $survey['questions'][$position]['scale'],
                 'reached'  => $reached,
-                'answered' => count(array_filter($counted, fn (array $s): bool => isset($s['answers'][$position]))),
+                'answered' => $answered[$position],
                 'left'     => $left,
                 'left_rate' => self::percent($left, $reached),
             ];
@@ -204,12 +229,12 @@ final class Results
 
         return [
             'survey'    => ['id' => $survey['id'], 'name' => $survey['name'], 'version' => $survey['version']],
-            'eligible'  => array_sum($skipped) + count($sessions),
-            'surveyed'  => count($counted),
+            'eligible'  => array_sum($skipped) + $total,
+            'surveyed'  => $counted,
             'finished'  => $reached,
             'questions' => $questions,
             'skipped'   => $skipped,
-            'excluded'  => $excluded,
+            'excluded'  => $total - $counted,
         ];
     }
 
@@ -271,6 +296,10 @@ final class Results
 
     private static function date(string $value): DateTimeImmutable
     {
+        // Checked as text first: createFromFormat() throws on a NUL byte instead of returning false.
+        if (preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $value) !== 1) {
+            throw new InvalidArgumentException('Dates must be YYYY-MM-DD.');
+        }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
         if ($date === false || $date->format('Y-m-d') !== $value) {
             throw new InvalidArgumentException('Dates must be YYYY-MM-DD.');
@@ -280,57 +309,47 @@ final class Results
     }
 
     /**
-     * Sessions of a version that ended in [from, to] (local days), with their answers.
+     * Sessions of a version that ended in [from, to] (local days), with their
+     * answers, one at a time. Results only keep counts and answer values, so a
+     * year of a busy PBX's surveys never has to fit in PHP's memory at once
+     * (the cabinet runs with PHP's default 128 MB).
      *
-     * @return list<array<string, mixed>>
+     * @return \Generator<int, array<string, mixed>>
      */
-    private function sessions(int $surveyId, DateTimeImmutable $from, DateTimeImmutable $to, string $direction): array
+    private function sessions(int $surveyId, DateTimeImmutable $from, DateTimeImmutable $to, string $direction): \Generator
     {
-        $sql = 'SELECT id, status, direction, did, agent, queue, ended_at, excluded, wait_seconds, cdr_talk_seconds FROM m_SurveySessions
-            WHERE survey_id = ? AND is_test = 0 AND ended_at >= ? AND ended_at < ?';
+        $sql = 'SELECT s.id, s.status, s.direction, s.did, s.agent, s.queue, s.ended_at, s.excluded, s.wait_seconds, s.cdr_talk_seconds,
+                a.position, a.value
+            FROM m_SurveySessions s LEFT JOIN m_SurveyAnswers a ON a.session_id = s.id
+            WHERE s.survey_id = ? AND s.is_test = 0 AND s.ended_at >= ? AND s.ended_at < ?';
         $params = [$surveyId, $from->getTimestamp(), $to->modify('+1 day')->getTimestamp()];
         if ($direction !== '') {
-            $sql .= ' AND direction = ?';
+            $sql .= ' AND s.direction = ?';
             $params[] = $direction;
         }
-        $stmt = $this->db->prepare($sql . ' ORDER BY ended_at');
+        $stmt = $this->db->prepare($sql . ' ORDER BY s.id');
         $stmt->execute($params);
-        $sessions = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $sessions[(int)$row['id']] = [
-                'status' => (string)$row['status'], 'direction' => (string)$row['direction'], 'did' => (string)$row['did'],
-                'agent' => (string)$row['agent'], 'queue' => (string)$row['queue'], 'ended_at' => (int)$row['ended_at'],
-                'excluded' => (int)$row['excluded'] === 1, 'answers' => [],
-                'wait' => $row['wait_seconds'] === null ? null : (int)$row['wait_seconds'],
-                'talk' => $row['cdr_talk_seconds'] === null ? null : (int)$row['cdr_talk_seconds'],
-            ];
-        }
-        if ($sessions !== []) {
-            // Through the session index, in chunks under SQLite's parameter limit.
-            foreach (array_chunk(array_keys($sessions), 500) as $chunk) {
-                $marks = implode(',', array_fill(0, count($chunk), '?'));
-                $answers = $this->db->prepare("SELECT session_id, position, value FROM m_SurveyAnswers WHERE session_id IN ($marks)");
-                $answers->execute($chunk);
-                foreach ($answers->fetchAll(PDO::FETCH_ASSOC) as $a) {
-                    $sessions[(int)$a['session_id']]['answers'][(int)$a['position']] = (int)$a['value'];
+        $current = null;
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if ($current === null || $current['id'] !== (int)$row['id']) {
+                if ($current !== null) {
+                    yield $current;
                 }
+                $current = [
+                    'id' => (int)$row['id'], 'status' => (string)$row['status'], 'direction' => (string)$row['direction'],
+                    'did' => (string)$row['did'], 'agent' => (string)$row['agent'], 'queue' => (string)$row['queue'],
+                    'ended_at' => (int)$row['ended_at'], 'excluded' => (int)$row['excluded'] === 1, 'answers' => [],
+                    'wait' => $row['wait_seconds'] === null ? null : (int)$row['wait_seconds'],
+                    'talk' => $row['cdr_talk_seconds'] === null ? null : (int)$row['cdr_talk_seconds'],
+                ];
+            }
+            if ($row['position'] !== null) {
+                $current['answers'][(int)$row['position']] = (int)$row['value'];
             }
         }
-
-        return array_values($sessions);
-    }
-
-    /** @return list<int> */
-    private static function answers(array $sessions, int $position): array
-    {
-        $values = [];
-        foreach ($sessions as $s) {
-            if (isset($s['answers'][$position])) {
-                $values[] = $s['answers'][$position];
-            }
+        if ($current !== null) {
+            yield $current;
         }
-
-        return $values;
     }
 
     /**
@@ -338,12 +357,13 @@ final class Results
      * and on ranges of two weeks or more where an average day has fewer
      * responses than a score needs, so the line isn't mostly gaps.
      *
+     * @param array<string, list<int>> $byDay Headline answers by local day (Y-m-d).
+     *
      * @return array{interval: string, points: list<array<string, mixed>>}
      */
-    private function trend(string $scale, array $sessions, DateTimeImmutable $from, DateTimeImmutable $to): array
+    private function trend(string $scale, array $byDay, int $answered, DateTimeImmutable $from, DateTimeImmutable $to): array
     {
         $days = (int)$from->diff($to)->days + 1;
-        $answered = count(array_filter($sessions, fn (array $s): bool => isset($s['answers'][1])));
         $weekly = $days > self::DAILY_UP_TO_DAYS
             || ($days >= self::WEEKLY_FROM_DAYS && $answered < $days * $this->minSample);
         $buckets = [];
@@ -351,13 +371,9 @@ final class Results
         for ($d = $start; $d <= $to; $d = $d->modify($weekly ? '+1 week' : '+1 day')) {
             $buckets[$d->format('Y-m-d')] = [];
         }
-        foreach ($sessions as $s) {
-            if (!isset($s['answers'][1])) {
-                continue;
-            }
-            $day = (new DateTimeImmutable('@' . $s['ended_at']))->setTimezone($from->getTimezone());
-            $key = ($weekly ? $day->modify('monday this week') : $day)->format('Y-m-d');
-            $buckets[$key][] = $s['answers'][1];
+        foreach ($byDay as $day => $values) {
+            $key = $weekly ? (new DateTimeImmutable($day))->modify('monday this week')->format('Y-m-d') : $day;
+            array_push($buckets[$key], ...$values);
         }
         $points = [];
         foreach ($buckets as $key => $values) {

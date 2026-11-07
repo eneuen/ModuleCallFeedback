@@ -7,6 +7,8 @@ declare(strict_types=1);
 namespace Modules\ModuleCallFeedback\Lib;
 
 use InvalidArgumentException;
+use MikoPBX\Common\Models\Extensions;
+use MikoPBX\Common\Models\LanInterfaces;
 use MikoPBX\Common\Models\PbxSettings;
 use MikoPBX\Core\System\BeanstalkClient;
 use MikoPBX\Core\System\Notifications;
@@ -148,6 +150,8 @@ class WorkerCallFeedback extends WorkerBase
             $answers[1],
             $counted['agent'],
             (int)$session['ended_at'],
+            LanInterfaces::buildAdminUrl(AlertMessage::PAGE_PATH),
+            $counted['agent'] === null ? null : Extensions::findFirstByNumber($counted['agent'])?->callerid,
         );
         $error = null;
         if ((new Notifications())->sendMail($settings['alert_emails'], $message['subject'], $message['body'], '', $error, false)) {
@@ -280,7 +284,8 @@ class WorkerCallFeedback extends WorkerBase
                 }
             }
             $open = (new FollowUps($this->moduleDb))->list('open', 1)['total'];
-            $message = SummaryMessage::build((string)PbxSettings::getValueByKey(PbxSettings::PBX_LANGUAGE), $weekly, $from, $to, $overviews, $open);
+            $message = SummaryMessage::build((string)PbxSettings::getValueByKey(PbxSettings::PBX_LANGUAGE), $weekly, $from, $to, $overviews, $open,
+                LanInterfaces::buildAdminUrl(AlertMessage::OVERVIEW_PATH));
             // Recorded first, so a failing mail server is not retried every minute.
             $this->moduleDb->prepare('INSERT INTO m_Settings (name, value) VALUES (?, ?)
                 ON CONFLICT (name) DO UPDATE SET value = excluded.value')->execute([self::SUMMARY_SENT_ON, $today]);

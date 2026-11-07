@@ -23,18 +23,19 @@ final class SummaryMessageTest extends TestCase
         $message = SummaryMessage::build('en-en', true, '2026-11-01', '2026-11-07', [
             self::overview("Support\r\nBcc: x@example.com", ScalePresets::NPS, 42, 12.0),
             self::overview('Sales', ScalePresets::CSAT, 5, 80.0),
-        ], 3);
+        ], 3, 'https://pbx.example.com/admin-cabinet/module-call-feedback/index');
 
         self::assertSame('Call Feedback: weekly summary', $message['subject']);
         self::assertStringContainsString('Period: 2026-11-01 – 2026-11-07', $message['body']);
-        self::assertStringContainsString('Support Bcc: x@example.com (v2): score NPS +12, 42 responses, response rate 61.5%', $message['body']);
-        self::assertStringContainsString('Sales (v2): score not enough responses yet, 5 responses', $message['body']);
+        self::assertStringContainsString('Support Bcc: x@example.com (v2): NPS +12, 42 responses, response rate 62%', $message['body']);
+        self::assertStringContainsString('Sales (v2): 5 responses, too few for a score', $message['body']);
         self::assertStringContainsString('Open follow-ups: 3', $message['body']);
+        self::assertStringEndsWith("https://pbx.example.com/admin-cabinet/module-call-feedback/index\n", $message['body']);
     }
 
     public function testRussianAndEmpty(): void
     {
-        $message = SummaryMessage::build('ru-ru', false, '2026-11-06', '2026-11-06', [], 0);
+        $message = SummaryMessage::build('ru-ru', false, '2026-11-06', '2026-11-06', [], 0, 'https://pbx/');
 
         self::assertSame('Оценка звонков: сводка за день', $message['subject']);
         self::assertStringContainsString('Период: 2026-11-06', $message['body']);
