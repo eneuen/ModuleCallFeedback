@@ -90,6 +90,7 @@ final class SurveyRepository
     {
         $stmt = $this->db->prepare(
             'SELECT s.id, s.family_id, s.version, s.name, s.status, s.language, s.created_at, s.activated_at, s.archived_at,
+                (SELECT q.scale FROM ' . self::QUESTIONS . ' q WHERE q.survey_id = s.id AND q.position = 1) AS scale,
                 (SELECT COUNT(*) FROM m_SurveySessions x WHERE x.survey_id = s.id AND x.is_test = 0 AND x.ended_at >= :since) AS offered,
                 (SELECT COUNT(*) FROM m_SurveySessions x WHERE x.survey_id = s.id AND x.is_test = 0 AND x.ended_at >= :since
                     AND x.status != \'offered\') AS responded,
@@ -111,6 +112,39 @@ final class SurveyRepository
         unset($row);
 
         return $rows;
+    }
+
+    /**
+     * The versions of a family, oldest first.
+     *
+     * @return list<array{id: int, version: int, status: string}>
+     */
+    public function family(int $familyId): array
+    {
+        $stmt = $this->db->prepare('SELECT id, version, status FROM ' . self::SURVEYS . ' WHERE family_id = ? ORDER BY version');
+        $stmt->execute([$familyId]);
+
+        return array_map(fn (array $r): array => ['id' => (int)$r['id'], 'version' => (int)$r['version'], 'status' => (string)$r['status']],
+            $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Routes another family's active survey runs on, as "direction:route_id"
+     * => that survey's name. One active survey per route.
+     *
+     * @return array<string, string>
+     */
+    public function routesTakenByOthers(int $familyId): array
+    {
+        $stmt = $this->db->prepare('SELECT t.direction, t.route_id, s.name FROM ' . self::TARGETS . ' t
+            JOIN ' . self::SURVEYS . " s ON s.family_id = t.family_id AND s.status = 'active' WHERE t.family_id != ?");
+        $stmt->execute([$familyId]);
+        $taken = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $taken[$r['direction'] . ':' . $r['route_id']] = (string)$r['name'];
+        }
+
+        return $taken;
     }
 
     /** @return list<array{id: int, number: string, note: ?string, created_at: int}> */

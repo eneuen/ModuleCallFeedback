@@ -269,6 +269,41 @@ final class SurveyEditor
     }
 
     /**
+     * Deletes a draft, which has never run: its questions and test calls go
+     * with it, and its routes too when it was the family's only version.
+     * Active and archived versions are kept for their results.
+     *
+     * @return int|null The family's newest remaining version, if any.
+     *
+     * @throws InvalidArgumentException When the version is not a draft.
+     */
+    public function deleteDraft(int $surveyId): ?int
+    {
+        $survey = $this->survey($surveyId);
+        if ($survey['status'] !== SurveyRepository::DRAFT) {
+            throw new InvalidArgumentException('Only a draft can be deleted. Archive an active survey instead.');
+        }
+
+        return $this->transaction(function () use ($survey): ?int {
+            $id = $survey['id'];
+            $this->db->prepare('DELETE FROM ' . FeedbackStore::ANSWERS . ' WHERE session_id IN
+                (SELECT id FROM ' . FeedbackStore::SESSIONS . ' WHERE survey_id = ?)')->execute([$id]);
+            $this->db->prepare('DELETE FROM ' . FeedbackStore::SESSIONS . ' WHERE survey_id = ?')->execute([$id]);
+            $this->db->prepare('DELETE FROM ' . SurveyRepository::QUESTIONS . ' WHERE survey_id = ?')->execute([$id]);
+            $this->db->prepare('DELETE FROM ' . SurveyRepository::SURVEYS . ' WHERE id = ?')->execute([$id]);
+            $stmt = $this->db->prepare('SELECT id FROM ' . SurveyRepository::SURVEYS . ' WHERE family_id = ? ORDER BY version DESC LIMIT 1');
+            $stmt->execute([$survey['family_id']]);
+            $remaining = $stmt->fetchColumn();
+            if ($remaining === false) {
+                $this->db->prepare('DELETE FROM ' . SurveyRepository::TARGETS . ' WHERE family_id = ?')->execute([$survey['family_id']]);
+                return null;
+            }
+
+            return (int)$remaining;
+        });
+    }
+
+    /**
      * A new draft version of a family, copied from the given version. A family
      * has at most one draft; asking again returns it.
      */

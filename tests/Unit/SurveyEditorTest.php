@@ -205,6 +205,42 @@ final class SurveyEditorTest extends TestCase
         $this->editor->update($id, ['sample_percent' => '10']);
     }
 
+    public function testDeletingADraftKeepsTheLiveVersion(): void
+    {
+        $v1 = Surveys::complete($this->editor, $this->module, [self::IN_DIRECT]);
+        $this->editor->activate($v1, $this->usable(), Surveys::NOW);
+        $v2 = $this->editor->newVersion($v1, Surveys::NOW + 10);
+        Surveys::testCall($this->module, $v2);
+
+        self::assertSame([[$v1, 1, 'active'], [$v2, 2, 'draft']], array_map('array_values', $this->repository->family($v1)));
+        self::assertSame($v1, $this->editor->deleteDraft($v2), 'The family\'s newest remaining version.');
+        self::assertNull($this->repository->find($v2));
+        self::assertSame(0, (int)$this->module->query("SELECT COUNT(*) FROM m_SurveySessions WHERE survey_id = $v2")->fetchColumn(), 'Its test calls go too.');
+        self::assertSame([self::IN_DIRECT], $this->repository->targetsOfFamily($v1), 'The live version keeps its routes.');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->editor->deleteDraft($v1);
+    }
+
+    public function testDeletingAFamilysOnlyDraftRemovesItsRoutes(): void
+    {
+        $id = Surveys::complete($this->editor, $this->module, [self::IN_DIRECT]);
+
+        self::assertNull($this->editor->deleteDraft($id));
+        self::assertSame([], $this->repository->targetsOfFamily($id));
+        self::assertSame(0, (int)$this->module->query("SELECT COUNT(*) FROM m_SurveyQuestions WHERE survey_id = $id")->fetchColumn());
+    }
+
+    public function testRoutesTakenByOtherActiveSurveys(): void
+    {
+        $live = Surveys::complete($this->editor, $this->module, [self::IN_DIRECT]);
+        $this->editor->activate($live, $this->usable(), Surveys::NOW);
+        $other = $this->editor->create('Second', 'en-en', Surveys::NOW);
+
+        self::assertSame(['in:40' => 'After-call survey'], $this->repository->routesTakenByOthers($other));
+        self::assertSame([], $this->repository->routesTakenByOthers($live), 'A family\'s own routes are not taken.');
+    }
+
     public function testDuplicateStartsANewFamilyWithoutTargets(): void
     {
         $id = Surveys::complete($this->editor, $this->module, [self::IN_DIRECT]);

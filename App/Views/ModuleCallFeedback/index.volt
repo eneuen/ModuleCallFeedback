@@ -118,7 +118,7 @@
                 <div class="fields">
                     <div class="eight wide field">
                         <label for="cf-new-name">{{ t._('cf_Name')|e }}</label>
-                        <input type="text" id="cf-new-name" maxlength="60" required>
+                        <input type="text" id="cf-new-name" maxlength="60" required placeholder="{{ t._('cf_NewSurveyPlaceholder')|e }}">
                     </div>
                     <div class="four wide field">
                         <label for="cf-new-language">{{ t._('cf_Language')|e }}</label>
@@ -129,6 +129,7 @@
                         <button class="ui basic button" type="button" id="cf-new-cancel">{{ t._('cf_Cancel')|e }}</button>
                     </div>
                 </div>
+                <p class="cf-note">{{ t._('cf_NewSurveyHint')|e }}</p>
             </form>
             <table class="ui very basic table cf-table" id="cf-surveys"></table>
         </div>

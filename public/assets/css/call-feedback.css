@@ -158,6 +158,13 @@
 
 .cf-page .cf-inline-form { margin-bottom: var(--cf-space-4); }
 .cf-page .cf-form-buttons { display: flex !important; align-items: flex-end; gap: var(--cf-space-2); }
+.cf-page .cf-sub-line.cf-ready { color: var(--cf-good); }
+.cf-page .cf-other-versions a, .cf-page .cf-version-links a { white-space: nowrap; }
+.cf-page .cf-version-links { color: var(--cf-muted); font-size: .9em; margin: calc(-1 * var(--cf-space-2)) 0 var(--cf-space-4); }
+.cf-page #cf-surveys td:first-child { min-width: 15em; }
+.cf-page #cf-surveys td:nth-child(2), .cf-page #cf-surveys td:nth-child(2) .cf-sub-line { white-space: nowrap; }
+.cf-page td.cf-archived-toggle { text-align: center !important; padding: var(--cf-space-3) !important; }
+.cf-page #cf-new-form .cf-note { margin-top: 0; }
 .cf-page .cf-route-labels .ui.label { margin: 0 var(--cf-space-1) var(--cf-space-1) 0; font-weight: 400; }
 .cf-page .cf-editor-head { display: flex; align-items: center; gap: var(--cf-space-3); flex-wrap: wrap; margin-bottom: var(--cf-space-4); }
 .cf-page .cf-editor-head .ui.header { margin: 0; }

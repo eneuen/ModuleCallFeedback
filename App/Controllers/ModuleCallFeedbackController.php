@@ -164,7 +164,18 @@ class ModuleCallFeedbackController extends BaseController
     /** GET surveys: every version, with targets and the last 7 days' counts. */
     public function surveysAction(): void
     {
-        $this->json(fn (): array => (new SurveyRepository($this->moduleDb()))->listing(time() - 7 * 86400));
+        $this->json(function (): array {
+            $rows = (new SurveyRepository($this->moduleDb()))->listing(time() - 7 * 86400);
+            // How many things stop each draft going live, so the list can say which are ready.
+            $editor = new SurveyEditor($this->moduleDb(), $this->configDb());
+            foreach ($rows as &$row) {
+                $row['problems'] = $row['status'] === SurveyRepository::DRAFT
+                    ? count($editor->activationProblems($row['id'], $this->promptUsable())) : 0;
+            }
+            unset($row);
+
+            return $rows;
+        });
     }
 
     /** GET survey: id. One version, its family's targets, test calls and what blocks activation. */
@@ -178,6 +189,8 @@ class ModuleCallFeedbackController extends BaseController
             return [
                 'survey'    => $survey,
                 'targets'   => $repository->targetsOfFamily($survey['family_id']),
+                'family'    => $repository->family($survey['family_id']),
+                'taken'     => $repository->routesTakenByOthers($survey['family_id']),
                 'testCalls' => $repository->testCalls($id),
                 'problems'  => $survey['status'] === SurveyRepository::DRAFT
                     ? (new SurveyEditor($this->moduleDb(), $this->configDb()))->activationProblems($id, $this->promptUsable())
@@ -228,6 +241,12 @@ class ModuleCallFeedbackController extends BaseController
             $editor->archive($this->idParam($this->request->getPost('id')), time());
             return [];
         }, reload: true);
+    }
+
+    /** POST deleteSurvey: id of a draft. Returns the family's newest remaining version, or null. */
+    public function deleteSurveyAction(): void
+    {
+        $this->write(fn (SurveyEditor $editor): array => ['id' => $editor->deleteDraft($this->idParam($this->request->getPost('id')))]);
     }
 
     /** POST newVersion: id. Returns the draft's ID. */

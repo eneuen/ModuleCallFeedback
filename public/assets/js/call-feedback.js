@@ -76,7 +76,10 @@
     labels: null,
     charts: {},
     followStatus: "open",
-    followUp: null
+    followUp: null,
+    dirty: false,
+    pendingVersion: null,
+    showArchived: false
   };
   var METRICS = {
     csat5: ["cf_MetricCsat", "CSAT", "%"],
@@ -232,8 +235,73 @@
       sectionActions($id(id)).append(button(t("cf_ExportCsv", "CSV"), "download", t("cf_ExportCsvHint", "Download this table as CSV"), () => downloadTable($id(id), name())));
     });
   }
+  var mainVersion = (versions) => versions.find((v) => v.status === "active") || versions.find((v) => v.status === "draft") || versions[0];
+  function showResults(id) {
+    state.pendingVersion = String(id);
+    selectTab("overview");
+  }
+  function surveyRow(versions) {
+    const s = mainVersion(versions);
+    const others = versions.filter((v) => v !== s);
+    const resultsOf = versions.find((v) => v.status === "active") || versions.find((v) => v.status === "archived");
+    const versionLink = (v) => el("a", {
+      href: "#",
+      text: sub(t("cf_VersionStatus", "v{n} {status}"), { n: v.version, status: label(STATUSES[v.status]).toLowerCase() }),
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openEditor(v.id);
+      }
+    });
+    const runsOn = s.targets.length === 0 ? el("span", { class: "cf-muted", text: t("cf_NoRoutes", "No routes") }) : el("div", { class: "cf-route-labels" }, s.targets.map((tg) => el("span", {
+      class: "ui small basic label",
+      title: routeText(tg.direction, tg.route_id)
+    }, el("i", { class: `${tg.direction === "in" ? "sign in alternate" : "sign out alternate"} icon` }), routeShort(tg.direction, tg.route_id))));
+    const readiness = s.status !== "draft" ? null : el("div", {
+      class: `cf-sub-line${s.problems ? "" : " cf-ready"}`,
+      text: s.problems ? sub(t("cf_ThingsToFix", "{n} thing(s) to fix"), { n: s.problems }) : t("cf_ReadyToActivate", "Ready to activate")
+    });
+    return el(
+      "tr",
+      { class: "cf-clickable", onclick: () => openEditor(s.id) },
+      el(
+        "td",
+        {},
+        el("a", { href: "#", text: s.name, onclick: (e) => e.preventDefault() }),
+        el("div", { class: "cf-sub-line", text: [metricName(s.scale), languageLabel(s.language), sub(t("cf_VersionN", "Version {n}"), { n: s.version })].join(" \xB7 ") }),
+        others.length ? el(
+          "div",
+          { class: "cf-sub-line cf-other-versions" },
+          `${t("cf_OtherVersions", "Other versions:")} `,
+          others.flatMap((v, i) => [i ? ", " : "", versionLink(v)])
+        ) : null
+      ),
+      el("td", {}, statusLabel(s.status), readiness),
+      el("td", {}, runsOn),
+      el("td", { class: "cf-num", text: s.offered ? sub(t("cf_AnsweredOf", "{n} of {offered} answered"), { n: count(s.responded), offered: count(s.offered) }) : "\u2014" }),
+      el("td", { class: "cf-actions-cell" }, resultsOf ? el("button", {
+        class: "ui basic small button",
+        type: "button",
+        onclick: (e) => {
+          e.stopPropagation();
+          showResults(resultsOf.id);
+        }
+      }, el("i", { class: "chart bar outline icon" }), t("cf_Results", "Results")) : null)
+    );
+  }
   function loadSurveys() {
     return get("surveys").then((rows) => {
+      const families = [];
+      const byFamily = {};
+      rows.forEach((r) => {
+        if (!byFamily[r.family_id]) {
+          byFamily[r.family_id] = [];
+          families.push(byFamily[r.family_id]);
+        }
+        byFamily[r.family_id].push(r);
+      });
+      const current = families.filter((f) => f.some((v) => v.status !== "archived"));
+      const archived = families.filter((f) => f.every((v) => v.status === "archived"));
       const table = $id("cf-surveys");
       const head = el("thead", {}, el(
         "tr",
@@ -241,35 +309,31 @@
         el("th", { text: t("cf_Name", "Name") }),
         el("th", { text: t("cf_Status", "Status") }),
         el("th", { text: t("cf_RunsOn", "Runs On") }),
-        el("th", { class: "cf-num", text: t("cf_Last7Days", "Last 7 Days") })
+        el("th", { class: "cf-num", text: t("cf_Last7Days", "Last 7 Days") }),
+        el("th")
       ));
-      const body = el("tbody");
-      if (rows.length === 0) {
-        body.append(el("tr", {}, el("td", { colspan: "4", class: "cf-empty-cell", text: t("cf_NoSurveys", "No surveys yet. Create one to start.") })));
-      }
-      rows.forEach((s) => {
-        const runsOn = s.targets.length === 0 ? el("span", { class: "cf-muted", text: t("cf_NoRoutes", "No routes") }) : el("div", { class: "cf-route-labels" }, s.targets.map((tg) => el("span", {
-          class: "ui small basic label",
-          title: routeText(tg.direction, tg.route_id)
-        }, el("i", { class: `${tg.direction === "in" ? "sign in alternate" : "sign out alternate"} icon` }), routeShort(tg.direction, tg.route_id))));
-        body.append(el(
-          "tr",
-          { class: "cf-clickable", onclick: () => openEditor(s.id) },
-          el(
-            "td",
-            {},
-            el("a", { href: "#", text: s.name, onclick: (e) => e.preventDefault() }),
-            el("div", { class: "cf-sub-line", text: `${t("cf_Version", "Version")} ${s.version} \xB7 ${languageLabel(s.language)}` })
-          ),
-          el("td", {}, statusLabel(s.status)),
-          el("td", {}, runsOn),
-          el("td", { class: "cf-num", text: s.offered ? sub(t("cf_AnsweredOf", "{n} of {offered} answered"), { n: count(s.responded), offered: count(s.offered) }) : "\u2014" })
-        ));
-      });
-      table.replaceChildren(head, body);
+      const body = el("tbody", {}, current.length === 0 ? el("tr", {}, el("td", { colspan: "5", class: "cf-empty-cell", text: t("cf_NoSurveys", "No surveys yet. Create one to start.") })) : current.map(surveyRow));
+      const archivedBody = el("tbody", { class: state.showArchived ? "" : "cf-hidden" }, archived.map(surveyRow));
+      const toggle = archived.length === 0 ? null : el("tbody", {}, el("tr", {}, el(
+        "td",
+        { colspan: "5", class: "cf-archived-toggle" },
+        el(
+          "button",
+          { class: "ui basic mini button", type: "button", onclick: () => {
+            state.showArchived = !state.showArchived;
+            loadSurveys();
+          } },
+          el("i", { class: `${state.showArchived ? "chevron up" : "chevron down"} icon` }),
+          sub(state.showArchived ? t("cf_HideArchived", "Hide Archived Surveys ({n})") : t("cf_ShowArchived", "Show Archived Surveys ({n})"), { n: archived.length })
+        )
+      )));
+      fill(table, head, body, toggle, archivedBody);
     });
   }
+  var canLeaveEditor = () => !state.dirty || window.confirm(t("cf_ConfirmLeave", "You have unsaved changes to this survey. Leave without saving them?"));
   function showList() {
+    if (!canLeaveEditor()) return;
+    state.dirty = false;
     state.editing = null;
     clearInterval(state.testPoll);
     $id("cf-editor").classList.add("cf-hidden");
@@ -284,11 +348,13 @@
       openEditor(r.id);
     }, (xhr) => showError(saveFailed(xhr)));
   }
-  function openEditor(id) {
+  function openEditor(id, force = false) {
+    if (!force && state.editing && state.editing.survey.id !== id && !canLeaveEditor()) return $.Deferred().resolve().promise();
     clearError();
     clearInterval(state.testPoll);
     return get("survey", { id }).then((data) => {
       state.editing = data;
+      state.dirty = false;
       $id("cf-survey-list").classList.add("cf-hidden");
       const box = $id("cf-editor");
       box.classList.remove("cf-hidden");
@@ -352,31 +418,50 @@
       "div",
       {},
       el("h5", { class: "ui header", text: heading }),
-      el("div", { class: "cf-targets" }, (state.options.routes[direction] || []).length === 0 ? el("p", { class: "cf-muted", text: t("cf_NoRoutesConfigured", "No routes configured.") }) : state.options.routes[direction].map((r) => el(
-        "div",
-        { class: "field" },
-        el(
+      el("div", { class: "cf-targets" }, (state.options.routes[direction] || []).length === 0 ? el("p", { class: "cf-muted", text: t("cf_NoRoutesConfigured", "No routes configured.") }) : state.options.routes[direction].map((r) => {
+        const key = `${direction}:${r.id}`;
+        const checked = targetKeys.has(key);
+        const takenBy = data.taken[key];
+        const why = !r.usable ? t("cf_PatternRoute", "number patterns are not supported") : takenBy ? sub(t("cf_RouteTakenBy", "used by {name}"), { name: takenBy }) : "";
+        return el(
           "div",
-          { class: `ui checkbox${r.usable ? "" : " disabled"}` },
-          el("input", {
-            type: "checkbox",
-            class: "cf-target",
-            "data-direction": direction,
-            "data-route": String(r.id),
-            id: `cf-target-${direction}-${r.id}`,
-            checked: targetKeys.has(`${direction}:${r.id}`),
-            disabled: archived || !r.usable
-          }),
-          el("label", { for: `cf-target-${direction}-${r.id}`, text: routeText(direction, r.id) + (r.usable ? "" : ` \u2014 ${t("cf_PatternRoute", "number patterns are not supported")}`) })
-        )
-      )))
+          { class: "field" },
+          el(
+            "div",
+            { class: `ui checkbox${r.usable && (!takenBy || checked) ? "" : " disabled"}` },
+            el("input", {
+              type: "checkbox",
+              class: "cf-target",
+              "data-direction": direction,
+              "data-route": String(r.id),
+              id: `cf-target-${direction}-${r.id}`,
+              checked,
+              disabled: archived || !r.usable || takenBy && !checked
+            }),
+            el(
+              "label",
+              { for: `cf-target-${direction}-${r.id}` },
+              routeText(direction, r.id),
+              why ? el("span", { class: "cf-muted", text: ` \u2014 ${why}` }) : null
+            )
+          )
+        );
+      }))
     );
+    const liveVersion = data.family.find((v) => v.status === "active" && v.id !== s.id);
+    const otherDraft = data.family.find((v) => v.status === "draft" && v.id !== s.id);
     const form = el(
       "form",
-      { class: "ui form cf-editor", id: "cf-editor-form", onsubmit: (e) => {
-        e.preventDefault();
-        saveEditor(result);
-      } },
+      {
+        class: "ui form cf-editor",
+        id: "cf-editor-form",
+        onsubmit: (e) => {
+          e.preventDefault();
+          saveEditor(result);
+        },
+        oninput: markDirty,
+        onchange: markDirty
+      },
       el("h4", { class: "ui dividing header", text: t("cf_SectionSurvey", "Survey") }),
       el(
         "div",
@@ -411,6 +496,7 @@
       hoursFields(s, archived),
       el("p", { class: "cf-note", text: t("cf_RulesHint", "Only calls an agent answered are surveyed, and never at the agent's choice. Excluded numbers and the limit on surveys running at once are under Settings.") }),
       el("h4", { class: "ui dividing header", text: t("cf_SectionTargets", "Runs On") }),
+      draft && liveVersion ? el("div", { class: "ui info message", text: sub(t("cf_SharedRoutes", "Routes belong to the survey, not to one version: a change here applies to the live version {n} as soon as you save."), { n: `${t("cf_VersionShort", "v")}${liveVersion.version}` }) }) : null,
       targetList("in", t("cf_IncomingRoutes", "Incoming routes: the caller is surveyed when the agent hangs up")),
       targetList("out", t("cf_OutgoingRoutes", "Outgoing routes: the customer is surveyed when the agent hangs up")),
       el("p", { class: "cf-note", text: t("cf_TargetsHint", "Blind-transferred calls and calls the customer ends first are never surveyed.") })
@@ -419,19 +505,48 @@
       "div",
       { class: "cf-head-actions" },
       archived ? null : el("button", { class: "ui primary small button", type: "submit", form: "cf-editor-form", text: t("cf_Save", "Save") }),
-      active ? el("button", {
+      draft ? null : el(
+        "button",
+        { class: "ui basic small button", type: "button", onclick: () => {
+          if (canLeaveEditor()) {
+            state.dirty = false;
+            showResults(s.id);
+          }
+        } },
+        el("i", { class: "chart bar outline icon" }),
+        t("cf_Results", "Results")
+      ),
+      // A survey has at most one draft: open it rather than offering a second.
+      otherDraft ? el(
+        "button",
+        { class: "ui basic small button", type: "button", onclick: () => openEditor(otherDraft.id) },
+        el("i", { class: "edit outline icon" }),
+        sub(t("cf_OpenDraft", "Open Draft (v{n})"), { n: otherDraft.version })
+      ) : active ? el("button", {
         class: "ui basic small button",
         type: "button",
         title: t("cf_NewVersionHint", "A new draft with the same settings, to change the questions or prompts"),
         onclick: () => act("newVersion", s.id, result, true)
       }, el("i", { class: "code branch icon" }), t("cf_NewVersion", "New Version")) : null,
-      el(
+      el("button", {
+        class: "ui basic small button",
+        type: "button",
+        title: t("cf_DuplicateHint", "A new, separate survey with the same settings and no routes"),
+        onclick: () => act("duplicateSurvey", s.id, result, true)
+      }, el("i", { class: "copy outline icon" }), t("cf_Duplicate", "Duplicate")),
+      draft ? el(
         "button",
-        { class: "ui basic small button", type: "button", onclick: () => act("duplicateSurvey", s.id, result, true) },
-        el("i", { class: "copy outline icon" }),
-        t("cf_Duplicate", "Duplicate")
-      ),
-      archived ? null : el(
+        {
+          class: "ui basic small negative button",
+          type: "button",
+          onclick: () => {
+            if (window.confirm(t("cf_ConfirmDelete", "Delete this draft and its test calls? This can't be undone."))) deleteDraft(s.id, result);
+          }
+        },
+        el("i", { class: "trash alternate outline icon" }),
+        t("cf_DeleteDraft", "Delete Draft")
+      ) : null,
+      active ? el(
         "button",
         {
           class: "ui basic small negative button",
@@ -441,8 +556,21 @@
           }
         },
         el("i", { class: "archive icon" }),
-        active ? t("cf_Stop", "Stop and Archive") : t("cf_Archive", "Archive")
-      )
+        t("cf_Stop", "Stop and Archive")
+      ) : null
+    );
+    const versions = data.family.length < 2 ? null : el(
+      "div",
+      { class: "cf-version-links" },
+      `${t("cf_Versions", "Versions:")} `,
+      data.family.flatMap((v, i) => [i ? " \xB7 " : "", v.id === s.id ? el("b", { text: sub(t("cf_VersionStatus", "v{n} {status}"), { n: v.version, status: label(STATUSES[v.status]).toLowerCase() }) }) : el("a", {
+        href: "#",
+        text: sub(t("cf_VersionStatus", "v{n} {status}"), { n: v.version, status: label(STATUSES[v.status]).toLowerCase() }),
+        onclick: (e) => {
+          e.preventDefault();
+          openEditor(v.id);
+        }
+      })])
     );
     const actions = archived ? null : el(
       "div",
@@ -477,6 +605,7 @@
         statusLabel(s.status),
         headActions
       ),
+      versions,
       problemsBox(data),
       lockedNote,
       form,
@@ -485,7 +614,32 @@
       actions
     );
   }
-  var activateHint = (data) => data.problems.length ? sub(t("cf_ActivateBlocked", "{n} thing(s) to fix before activating: see the list at the top."), { n: data.problems.length }) : t("cf_ActivateReady", "Ready to go live.");
+  var activateHint = (data) => {
+    if (state.dirty) return t("cf_SaveFirst", "Save your changes first: test calls and activation use the saved version.");
+    return data.problems.length ? sub(t("cf_ActivateBlocked", "{n} thing(s) to fix before activating: see the list at the top."), { n: data.problems.length }) : t("cf_ActivateReady", "Ready to go live.");
+  };
+  function markDirty(e) {
+    if (e && e.target && e.target.closest && !e.target.closest("#cf-editor-form")) return;
+    state.dirty = true;
+    const activate = $id("cf-activate");
+    if (activate) activate.disabled = true;
+    const ring = $id("cf-ring");
+    if (ring) ring.disabled = true;
+    const hint = $id("cf-activate-hint");
+    if (hint) hint.textContent = activateHint(state.editing);
+    const ringHint = $id("cf-ring-hint");
+    if (ringHint) ringHint.classList.remove("cf-hidden");
+  }
+  function deleteDraft(id, result) {
+    post("deleteSurvey", { id }).then((r) => {
+      state.dirty = false;
+      if (r && r.id) openEditor(r.id, true);
+      else {
+        state.editing = null;
+        showList();
+      }
+    }, (xhr) => message(result, "negative", saveFailed(xhr)));
+  }
   function problemsBox(data) {
     if (data.survey.status !== "draft" || data.problems.length === 0) return el("div", { id: "cf-problems" });
     return el(
@@ -523,9 +677,9 @@
       const problems = $id("cf-problems");
       if (problems) problems.replaceWith(problemsBox(data));
       const activate = $id("cf-activate");
-      if (activate) activate.disabled = data.problems.length > 0;
+      if (activate) activate.disabled = state.dirty || data.problems.length > 0;
       const hint = $id("cf-activate-hint");
-      if (hint) hint.textContent = activateHint(data);
+      if (hint) hint.textContent = activateHint(state.editing);
       return data;
     });
   }
@@ -562,7 +716,7 @@
         el(
           "div",
           { class: "six wide field cf-form-buttons" },
-          el("button", { class: "ui button", type: "button", disabled: extensions.length === 0, onclick: ring }, el("i", { class: "phone icon" }), t("cf_RingForTest", "Place Test Call")),
+          el("button", { class: "ui button", type: "button", id: "cf-ring", disabled: extensions.length === 0, onclick: ring }, el("i", { class: "phone icon" }), t("cf_RingForTest", "Place Test Call")),
           el("button", {
             class: "ui basic icon button",
             type: "button",
@@ -572,6 +726,7 @@
           }, el("i", { class: "sync icon" }))
         )
       )),
+      el("p", { class: "cf-note cf-hidden", id: "cf-ring-hint", text: t("cf_SaveFirstTest", "Save your changes first: a test call plays the saved version.") }),
       result,
       testCallList(data)
     );
@@ -626,13 +781,13 @@
       fields.questions = readQuestions();
     }
     const targets = [...document.querySelectorAll("#cf-editor .cf-target:checked")].map((box) => ({ direction: box.dataset.direction, route_id: box.dataset.route }));
-    post("saveSurvey", { id: s.id, fields: JSON.stringify(fields) }).then(() => post("saveTargets", { id: s.id, targets: JSON.stringify(targets) })).then(() => openEditor(s.id)).then(
+    post("saveSurvey", { id: s.id, fields: JSON.stringify(fields) }).then(() => post("saveTargets", { id: s.id, targets: JSON.stringify(targets) })).then(() => openEditor(s.id, true)).then(
       () => message($id("cf-editor-result"), "positive", t("cf_Saved", "Saved. Calls use the change within a few seconds.")),
       (xhr) => message(result, "negative", saveFailed(xhr))
     );
   }
   function act(action, id, result, follow = false) {
-    post(action, { id }).then((r) => openEditor(follow && r && r.id ? r.id : id)).then(
+    post(action, { id }).then((r) => openEditor(follow && r && r.id ? r.id : id, true)).then(
       () => message($id("cf-editor-result"), "positive", t("cf_Done", "Done.")),
       (xhr) => message(result, "negative", saveFailed(xhr))
     );
@@ -1245,7 +1400,9 @@
       state.versions = data.versions;
       state.labels = data.labels;
       const sel = $id("cf-version");
-      const current = sel.value || (data.versions.length ? String(data.versions[0].id) : "");
+      const asked = state.pendingVersion;
+      state.pendingVersion = null;
+      const current = asked || sel.value || (data.versions.length ? String(data.versions[0].id) : "");
       sel.replaceChildren(...data.versions.map((v) => el(
         "option",
         { value: String(v.id), selected: String(v.id) === current },
@@ -1459,6 +1616,8 @@
   }
   var RESULT_TABS = ["overview", "breakdowns", "health"];
   function selectTab(tab) {
+    if (state.tab === "surveys" && tab !== "surveys" && state.editing && !canLeaveEditor()) return;
+    if (tab !== "surveys") state.dirty = false;
     state.tab = tab;
     document.querySelectorAll("#call-feedback [data-tab]").forEach((n) => n.classList.toggle("active", n.dataset.tab === tab));
     $id("cf-toolbar").classList.toggle("cf-hidden", !RESULT_TABS.includes(tab) || state.versions.length === 0);
@@ -1482,9 +1641,16 @@
     document.querySelectorAll("#cf-tabs .item").forEach((a) => a.addEventListener("click", () => selectTab(a.dataset.tab)));
     $id("cf-tabs").addEventListener("scroll", updateTabsOverflow);
     $id("cf-new-language").replaceChildren(...Object.keys(LANGUAGES).map((l) => el("option", { value: l }, languageLabel(l))));
+    $("#cf-new-language").dropdown();
     $id("cf-new-survey").addEventListener("click", () => {
       $id("cf-new-form").classList.remove("cf-hidden");
       $id("cf-new-name").focus();
+    });
+    window.addEventListener("beforeunload", (e) => {
+      if (state.dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
     });
     $id("cf-new-cancel").addEventListener("click", () => $id("cf-new-form").classList.add("cf-hidden"));
     $id("cf-new-form").addEventListener("submit", createSurvey);

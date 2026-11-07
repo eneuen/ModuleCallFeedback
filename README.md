@@ -19,7 +19,9 @@ Everything is under **Modules → Call Feedback**, for administrators only.
 3. **Who gets surveyed.** Minimum talk time (default 20 s), the days and hours the survey runs, the share of calls to survey, and how long to wait before asking the same number again (default 30 days).
 4. **Runs on.** The incoming and outgoing routes the survey runs on. Only one active survey may run on a route.
 5. **Test call.** Ring an extension and answer the survey as a caller would. A version needs a test call before it can go live.
-6. **Activate.** Once active, the questions and prompts are fixed so results stay comparable; to change the wording, create a new version. Rules and routes can still change.
+6. **Activate.** Once active, the questions and prompts are fixed so results stay comparable; to change the wording, create a new version. Rules and routes can still change, and routes belong to the survey, so they are shared by all its versions.
+
+A draft that was never activated can be deleted. An active survey is stopped by archiving it, which keeps its results.
 
 **Settings** holds the scores that open a follow-up (CSAT 1–2, NPS 0–6, CES 1–2 by default), alert recipients and a daily or weekly summary email, the number prefixes that may be called back in one click, the minimum responses before a score is shown, and the limit on surveys running at once; these are saved together with one Save button. Below them, changes apply at once: the list of numbers never to survey, and "delete all data for a number", next to how long the PBX keeps callers' numbers.
 
