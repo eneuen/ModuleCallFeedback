@@ -41,6 +41,20 @@ Keep code that needs no core classes (the hand-off validation, the dialplan buil
 
 Code that needs the MikoPBX core (the hooks, the worker, the AGI script, the controller) is tested on a MikoPBX 2026.6.34 instance, such as the official Docker image `ghcr.io/mikopbx/mikopbx:2026.6.34`. [tools/callsim](tools/callsim/README.md) places real SIP calls through such a test PBX and checks the survey end to end; run its probe scenarios before a release.
 
+## How a survey runs
+
+The module adds its survey through MikoPBX's module dialplan hooks; it doesn't edit custom dialplan files. With no active survey it adds nothing to any call.
+
+- **Inbound:** MikoPBX's inbound routes dial with Asterisk's `g` option, so the caller's channel continues after the agent hangs up. The module's after-dial hook enters the survey with `Gosub` and returns, so any custom after-dial dialplan still runs.
+- **Outbound:** on targeted routes, the module appends `F(...)` to the dial options, which moves the customer into the survey when the agent hangs up.
+- **Only calls an agent answered are surveyed.** The module marks when an agent's phone answers (inbound) or hands the agent's talk time to the survey (outbound), so calls that only reached an IVR, voicemail or a hangup action are skipped, and talk time excludes time waiting in a queue.
+- **Not surveyed:** callers who hang up first, and blind-transferred calls (the transfer moves the caller out of the inbound route). Calls a rule skips (too short, outside survey hours, excluded, asked recently, not sampled, too many surveys at once) are counted per day, survey version, route and reason.
+- **Recording results:** answers are kept in channel variables during the survey. When the customer's channel ends, a hangup handler runs the module's AGI script once. It checks every value against a fixed pattern and passes the record to the module's worker over the PBX's internal Beanstalk queue. The worker checks it again, keeps only answers that are on the question's scale, and stores the session, so a caller who hangs up after the first question still counts.
+- **Attribution:** once the call is in the CDR, the worker fills in the answering agent, the queue and the call's real talk time from its CDR legs (the same leg-stitching logic as the Call Insights module). A session under the minimum talk time is kept but left out of scores, and a session whose call never appears in the CDR is discarded. Only then does a low score open a follow-up and send the alert.
+- **Limits:** `TIMEOUT(absolute)` ends every survey within 3 minutes, and a `GROUP_COUNT` check caps the surveys running at once.
+
+The unit tests run against SQLite files built from the module's model annotations and from calls recorded on a real PBX (`tests/fixtures/cdr`). [tools/callsim](tools/callsim/README.md) places real SIP calls through a disposable MikoPBX test instance with softphones and a fake carrier; its `probe.py` runs the survey scenarios (inbound, outbound, transfers, rules, test calls, call-backs) and checks both the dialplan's decisions and what the worker stored.
+
 ## Layout
 
 | Path | What it holds |
@@ -67,6 +81,7 @@ Code that needs the MikoPBX core (the hooks, the worker, the AGI script, the con
 | `Messages/` | Interface text (English and Russian) |
 | `build/`, `package.json` | Builds the browser assets with esbuild, and the release zip (`build/package.sh`) |
 | `tests/Unit/` | PHPUnit tests that run without a PBX |
+| `docs/screenshots/` | The README's screenshots, taken on a test PBX with simulated calls |
 | `tests/fixtures/` | CDR legs recorded from real calls, and the production `cdr_general` schema |
 | `tools/callsim/` | Real-call test harness and the survey probe scenarios |
 | `tools/check-banned.php` | Fails the build if shipped code uses a banned function |
@@ -77,7 +92,7 @@ Code that needs the MikoPBX core (the hooks, the worker, the AGI script, the con
 
 This section is for maintainers.
 
-What ships is everything except the development files listed as `export-ignore` in `.gitattributes`: tests, tools, build scripts, script sources, dependency manifests and CI files. That one list applies to every archive git makes, including the release zip and GitHub's "Source code" downloads. Those downloads are for developers only, because `module.json` keeps its `%ModuleVersion%` placeholder until a release is packaged. To work on the module, clone the repository.
+What ships is everything except the development files listed as `export-ignore` in `.gitattributes`: tests, tools, build scripts, script sources, dependency manifests, CI files and the README's screenshots. That one list applies to every archive git makes, including the release zip and GitHub's "Source code" downloads. Those downloads are for developers only, because `module.json` keeps its `%ModuleVersion%` placeholder until a release is packaged. To work on the module, clone the repository.
 
 To release a version:
 

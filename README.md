@@ -1,81 +1,150 @@
 # Call Feedback for MikoPBX
 
-A free MikoPBX module that keeps the customer on the line when the agent hangs up and runs a short keypad survey: one headline score (CSAT 1–5, NPS 0–10 or CES 1–5) and up to two more questions, such as "was your issue resolved?". Results are tied to the call and shown to administrators with a follow-up list and email alerts for unhappy callers.
+**Module ID:** `ModuleCallFeedback`
 
-> **Status: in development, not released yet.** The survey, results and follow-ups work on MikoPBX 2026.6.34 and are tested with real calls, but the module is not yet ready for production use.
+A MikoPBX extension module that asks your callers how the call went. When the agent hangs up, the caller stays on the line for a short keypad survey: one headline score (CSAT 1–5, NPS 0–10 or CES 1–5) and up to two more questions, such as "was your issue resolved?". Every answer is tied to the call, its agent and its queue, and the admin cabinet shows the results, where callers drop out of the survey, and a follow-up list with email alerts for unhappy callers.
+
+> **Status: in development, not released yet.** It works on MikoPBX 2026.6.34 and is tested with real calls, but it isn't ready for production use. Releases will be on the [Releases page](https://github.com/eneuen/ModuleCallFeedback/releases), and what changes in each version is in [CHANGELOG.md](CHANGELOG.md).
+
+![The Overview tab: the CSAT score, response and completion rates, open follow-ups, and the score over time](docs/screenshots/overview.png)
+
+## Features
+
+- **Surveys** on chosen incoming and outgoing routes: up to three questions on fixed scales (CSAT, NPS, CES, yes/no), your own recorded prompts, and rules for minimum talk time, days and hours, the share of calls to survey and how often the same number is asked. A test call plays the survey to an extension before it goes live.
+- **Results:** the headline score with its change from the previous period, response and resolution rates, the score over time, and the score by agent, queue, line, direction, hour, weekday, time to answer or talk time. Scores stay hidden until a group has enough responses.
+- **Survey health:** how many eligible calls were surveyed, how many callers reached the end, the question where most of them leave, and how many calls each rule left out.
+- **Follow-ups:** a low score opens a case with an email alert. Cases have a status and a note, and a call-back rings an agent's extension and then the customer, with safeguards against calling expensive numbers.
+- **Versions:** once a survey is live its wording is fixed, so results stay comparable. Changing it means a new version, and versions are never averaged together.
+- **Exports:** CSV of any results table, PNG of any chart, and an optional daily or weekly summary email.
+- **Languages:** English and Russian, following the admin cabinet's language. Survey prompts can be in either language.
+
+## Screenshots
+
+The screenshots show a test PBX with simulated calls.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/survey-health.png"><img src="docs/screenshots/survey-health.png" alt="Survey Health: eligible calls, share surveyed, share reaching the end, and where callers leave the survey"></a>
+      <br><b>Survey Health.</b> How many eligible calls were surveyed, how far callers got, and the question most of them leave at.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/breakdowns.png"><img src="docs/screenshots/breakdowns.png" alt="Breakdowns: the CSAT score, average and responses per agent"></a>
+      <br><b>Breakdowns.</b> The score per agent, queue, line, direction, hour, weekday, time to answer or talk time.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/follow-ups.png"><img src="docs/screenshots/follow-ups.png" alt="Follow-Ups: low-scoring calls with the score, caller, agent, queue and status"></a>
+      <br><b>Follow-Ups.</b> Every call with a low score, filtered by status, ready to call back or update.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/follow-up-dialog.png"><img src="docs/screenshots/follow-up-dialog.png" alt="A follow-up: the call's details, the call-back controls, and the status and note"></a>
+      <br><b>A follow-up.</b> The call's answers, agent and queue; a call-back through your outgoing routes; and the case's status and note.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/surveys.png"><img src="docs/screenshots/surveys.png" alt="Surveys: each survey with its status, routes and responses in the last 7 days"></a>
+      <br><b>Surveys.</b> Each survey with its status, the routes it runs on, and how many callers answered in the last 7 days.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings: follow-up thresholds, alert and summary emails, call-back prefixes and limits"></a>
+      <br><b>Settings.</b> The scores that open a follow-up, alert and summary emails, one-click call-back prefixes, and limits.
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">
+      <a href="docs/screenshots/survey-editor.png"><img src="docs/screenshots/survey-editor.png" alt="The survey editor: name, language, prompts and questions of a live survey version"></a>
+      <br><b>The survey editor.</b> Prompts and questions, then the rules, routes and a test call. A live version's wording is fixed; New Version starts a draft to change it.
+    </td>
+  </tr>
+</table>
 
 ## Requirements
 
 - MikoPBX 2026.6.34 or later.
-- Prompts as custom sound files (upload them under Sound files; MIKO's Phrase Studio module can generate them).
-- For alert emails: the PBX's mail settings, with email notifications switched on.
+- An admin account on the PBX: the module's pages are shown to admins only.
+- Your survey prompts as sound files: an intro, one per question, a thank-you and, optionally, an "invalid key" prompt. Upload them under **Sound files**; MIKO's Phrase Studio module can generate them.
+- For alert and summary emails: the PBX's mail settings, with email notifications switched on.
+
+A survey can't be activated while:
+
+- another module that surveys callers after the call is enabled, because both would survey the same calls;
+- the PBX's default incoming action plays a sound file, because that replaces the step after the agent hangs up on every incoming route.
+
+Incoming routes that match numbers by pattern can't be surveyed; routes for a single number or for any number can.
+
+## Installing
+
+1. Download `ModuleCallFeedback-<version>.zip` and its `.sha256` file from this repository's **Releases** page. Use that zip: the "Source code" downloads GitHub adds to each release are for developers and can't be installed.
+2. Check the download against its checksum, for example with `shasum -a 256 -c ModuleCallFeedback-<version>.zip.sha256` (macOS or Linux).
+3. In the MikoPBX admin cabinet, open **Modules**, upload the zip, then enable the module.
+
+Call Feedback appears in the sidebar for admins. No call changes until you activate a survey.
+
+**Updating:** upload the newer zip on the same page. Surveys, results, follow-ups and settings are kept.
+
+**Uninstalling:** disable and delete the module on the same page. Its survey steps leave every call straight away. Unless you choose to keep its settings, its database (surveys, answers, follow-ups, settings) is deleted with it.
 
 ## Setting up a survey
 
-Everything is under **Modules → Call Feedback**, for administrators only.
+Everything is under **Modules → Call Feedback**.
 
-1. **Surveys → New survey.** Choose a name and the prompt language (English or Russian).
+1. **Surveys → New Survey.** Give it a name and choose the prompt language.
 2. **Prompts and questions.** Choose the intro, thank-you and (optionally) invalid-key prompts, and up to three questions. Question 1 is the headline score; the others can be any scale, including yes/no. For NPS, the prompt must say "press 1 then 0 for 10".
-3. **Who gets surveyed.** Minimum talk time (default 20 s), the days and hours the survey runs, the share of calls to survey, and how long to wait before asking the same number again (default 30 days).
-4. **Runs on.** The incoming and outgoing routes the survey runs on. Only one active survey may run on a route.
+3. **Who gets surveyed.** The minimum talk time (default 20 seconds), the days and hours the survey runs, the share of calls to survey, and how long to wait before asking the same number again (default 30 days).
+4. **Runs on.** The incoming and outgoing routes the survey runs on. Only one active survey can run on a route.
 5. **Test call.** Ring an extension and answer the survey as a caller would. A version needs a test call before it can go live.
-6. **Activate.** Once active, the questions and prompts are fixed so results stay comparable; to change the wording, create a new version. Rules and routes can still change, and routes belong to the survey, so they are shared by all its versions.
+6. **Activate.** The survey starts with the next call.
 
-A draft that was never activated can be deleted. An active survey is stopped by archiving it, which keeps its results.
+To change the questions or prompts of a live survey, create a new version: activating it replaces the old one, and each version's results are kept apart. Rules and routes can be changed on a live survey. A draft that was never activated can be deleted; a live survey is stopped by archiving it, which keeps its results.
 
-**Settings** holds the scores that open a follow-up (CSAT 1–2, NPS 0–6, CES 1–2 by default), alert recipients and a daily or weekly summary email, the number prefixes that may be called back in one click, the minimum responses before a score is shown, and the limit on surveys running at once; these are saved together with one Save button. Below them, changes apply at once: the list of numbers never to survey, and "delete all data for a number", next to how long the PBX keeps callers' numbers.
+**Settings** holds:
 
-## What it shows
-
-- **Overview:** the headline score with its responses, average and change against the previous period; the response rate; the resolution rate (or the completion rate when there is no yes/no question); the open follow-ups; the score over time, by day or by week; and the distribution of answers. Every score shows its response count, and scores with too few responses are not shown.
-- **Breakdowns:** the score by agent, queue, line, direction, hour of day, weekday, time to answer or talk time, with small groups greyed out.
-- **Survey health:** of the calls an agent answered on the survey's routes, how many were surveyed and how many callers reached the end; where callers left (the question most callers leave at is marked); and how many calls each rule left unsurveyed.
-- **Follow-ups:** every call with a low headline score, newest first, filtered by status (open, contacted, resolved), with the caller's number, agent and queue. **Update** opens the case to set its status and a note. **Call back** rings an extension of your choice and, when it answers, calls the customer through the normal outgoing routes.
-
-Charts download as PNG images and results tables as CSV files.
-
-Results are per survey version: different wordings are never averaged together.
+- the scores that open a follow-up (by default CSAT 1–2, NPS 0–6, CES 1–2);
+- who gets alert emails, and an optional daily or weekly summary email;
+- the number prefixes that can be called back in one click (none by default);
+- how many responses a score needs before it's shown, and how many surveys can run at once;
+- numbers never to survey, and "delete all data for a number".
 
 ## How it works
 
-The module adds its survey through MikoPBX's module dialplan hooks; it doesn't edit custom dialplan files. With no active survey it adds nothing to any call.
+- **The caller stays on the line.** When the agent hangs up, an inbound caller (or, on outgoing routes, the customer) is moved into the survey instead of being disconnected. Every survey ends within 3 minutes, whatever is pressed.
+- **Only answered calls are surveyed.** Calls that reached only an IVR, voicemail or a hangup action are skipped, and talk time is counted from the moment an agent answered, so time waiting in a queue doesn't count towards the minimum.
+- **Your dialplan isn't edited.** The module adds its steps through MikoPBX's own module hooks, after any custom dialplan you have. With no active survey, it adds nothing to any call.
+- **Answers are matched to the call.** A background worker stores each survey and, once the call is in the call history, fills in the agent, queue and real talk time. Only then does a low score open a follow-up and send an alert. Surveys under the minimum talk time are kept but left out of scores.
+- **Nothing leaves the PBX.** The module makes no outside connections and adds no network ports or AMI users; the charts and their library are served from the PBX itself.
 
-- **Inbound:** MikoPBX's inbound routes dial with Asterisk's `g` option, so the caller's channel continues after the agent hangs up. The module's after-dial hook enters the survey with `Gosub` and returns, so any custom after-dial dialplan still runs.
-- **Outbound:** on targeted routes, the module appends `F(...)` to the dial options, which moves the customer into the survey when the agent hangs up.
-- **Only calls an agent answered are surveyed.** The module marks when an agent's phone answers (inbound) or hands the agent's talk time to the survey (outbound), so calls that only reached an IVR, voicemail or a hangup action are skipped, and talk time excludes time on hold.
-- **Not surveyed:** callers who hang up first, and blind-transferred calls (the transfer moves the caller out of the inbound route). Calls a rule skips (too short, outside survey hours, excluded, asked recently, not sampled, too many surveys at once) are counted per day, survey version, route and reason.
-- **Recording results:** answers are kept in channel variables during the survey. When the customer's channel ends, a hangup handler runs the module's AGI script once. It checks every value against a fixed pattern and passes the record to the module's worker over the PBX's internal Beanstalk queue. The worker checks it again, keeps only answers that are on the question's scale, and stores the session, so a caller who hangs up after the first question still counts.
-- **Attribution:** once the call is in the CDR, the worker fills in the answering agent, the queue and the call's real talk time from its CDR legs (the same leg-stitching logic as the Call Insights module). A session under the minimum talk time is kept but left out of scores, and a session whose call never appears in the CDR is discarded. Only then does a low score open a follow-up and send the alert.
+## Good to know
 
-## Privacy and security
+- **Not every caller can be asked.** Callers who hang up before the agent, and calls the agent blind-transfers, are never surveyed. Scores therefore lean towards callers who stayed on the line; the response rate and Survey health show how many were reached.
+- **Routes belong to the survey, not to a version.** Changing the routes on a new draft also changes them for the live version as soon as you save.
+- **Results are per version.** Different wordings are never averaged together; pick the version in the results toolbar.
+- **Calls a rule skips are counted.** Calls left out because they were too short, outside the survey's hours, excluded, asked recently, not sampled or over the limit of surveys at once appear under Survey health.
 
-- Admin-only pages; writes need an AJAX POST with the admin's token, so a cross-site form can't change anything.
-- Nothing typed by an admin or sent by a caller reaches the dialplan: only IDs, digits, fixed values and sound-file paths resolved by the PBX.
-- No new AMI users, open ports or outbound connections. The survey contexts can't be dialled from a phone or a trunk.
+## Privacy and data
+
+- Callers' numbers follow the PBX's own retention period, the **Call recording storage period** on the **Storage** page, which also sets how long MikoPBX keeps its call history. After that, numbers are removed from survey results; scores, agents and queues stay. The "don't ask this number again" memory follows the same limit.
+- **Delete all data for a number** (Settings) removes a caller's answers and follow-ups at once, for example when a caller asks.
 - Alert and summary emails carry the survey, score, agent and a link to the page, never the caller's number.
-- **Call-back safeguards:** a caller can fake an international or premium-rate number and wait to be called back. Only numbers starting with a prefix you list in Settings (none by default) can be called back in one click; any other number must be typed in to match. Call-backs go through the outgoing routes and their restrictions, and each one is logged with who placed it.
-- **Retention:** callers' numbers are kept as long as the PBX keeps its call history (the call history's retention setting), then removed; scores stay. The "don't ask again" memory follows the same limit, so with a retention shorter than a survey's frequency cap, privacy wins. "Delete all data for a number" removes a caller's sessions, answers and follow-ups at once.
-- A survey ends within 3 minutes whatever is pressed, and the number running at once is capped, so surveys can't tie up trunk channels.
-- No audio is recorded.
+- No audio is recorded. Answers are keypad presses only.
+- Everything the module stores is in its own database on the PBX, deleted when you uninstall it without keeping settings.
 
-NPS: Net Promoter, NPS and Net Promoter Score are registered trademarks of Bain & Company, Inc., Satmetrix Systems, Inc. and Fred Reichheld.
+## Security
 
-## Development
+- **Admins only.** Every request is checked for the `admins` role by the module itself, on top of MikoPBX's own checks, and changes need the signed-in admin's token, so another website can't make them.
+- **Callers can't steer the PBX.** Nothing typed by an admin or pressed by a caller is written into the dialplan, and the survey steps can't be dialled from a phone or a trunk.
+- **Call-backs can't be turned against you.** A caller can fake an international or premium-rate number and wait to be called back. Only numbers that start with a prefix you list in Settings are called back in one click; any other number has to be typed in to match. Call-backs go through your outgoing routes and their restrictions, and each one is logged with who placed it.
 
-```bash
-composer install
-composer test        # unit tests: PHP 8.4 or later, no PBX needed
-composer check-banned
-npm ci
-npm run build        # rebuilds public/assets/js from public/assets/js/src
-```
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
-The unit tests run against SQLite files built from the module's model annotations and from calls recorded on a real PBX (`tests/fixtures/cdr`).
+## Contributing
 
-`tools/callsim/` places real SIP calls through a disposable MikoPBX test instance with softphones and a fake carrier. `probe.py` runs the survey scenarios (inbound, outbound, transfers, rules, test calls, call-backs) and checks both the dialplan's decisions and what the worker stored. See [tools/callsim/README.md](tools/callsim/README.md).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for static analysis, the layout and how a release is packaged, and [SECURITY.md](SECURITY.md) to report a vulnerability.
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to run the tests and checks, how a survey runs under the hood, how the code is laid out, and how releases are made. Before a release, the survey is checked with real SIP calls against MikoPBX, using the test harness in [tools/callsim](tools/callsim/README.md).
 
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE). The bundled Apache ECharts is Apache-2.0; its licence and notice are in `public/assets/js/vendor/`.
+
+Net Promoter, NPS and Net Promoter Score are registered trademarks of Bain & Company, Inc., Satmetrix Systems, Inc. and Fred Reichheld.
