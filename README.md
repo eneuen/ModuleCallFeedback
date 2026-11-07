@@ -16,7 +16,7 @@ A MikoPBX extension module that asks your callers how the call went. When the ag
 - **Follow-ups:** a low score opens a case with an email alert. Cases have a status and a note, and a call-back rings an agent's extension and then the customer, with safeguards against calling expensive numbers.
 - **Versions:** once a survey is live its wording is fixed, so results stay comparable. Changing it means a new version, and versions are never averaged together.
 - **Exports:** CSV of any results table, PNG of any chart, and an optional daily or weekly summary email.
-- **Ready to try:** a new install starts with an example survey that uses the built-in prompts, so you can hear a survey on your own phone a minute after installing.
+- **Ready to try:** a new install starts with an example survey that uses the built-in prompts, so you can hear a survey on your own phone a minute after installing. New surveys can start from the same kind of template: CSAT, NPS or CES, each followed by "was your issue resolved?".
 - **Languages:** English and Russian, following the admin cabinet's language. Each survey plays its prompts in English or Russian.
 
 ## Screenshots
@@ -94,7 +94,7 @@ Call Feedback appears in the sidebar for admins. No call changes until you activ
 
 Everything is under **Modules → Call Feedback**.
 
-1. **Surveys → New Survey.** Give it a name and choose the prompt language.
+1. **Surveys → New Survey.** Choose what to start from: a template (CSAT, NPS or CES, each followed by "was your issue resolved?", with the built-in prompts already chosen) or a blank survey. Then give it a name and choose the prompt language. A survey from a template only needs routes and a test call; steps 2 and 3 are there to change it.
 2. **Prompts and questions.** Choose the intro, thank-you and (optionally) invalid-key prompts, and up to three questions. Each prompt menu lists the built-in prompts first, which play in the survey's language, then your own sound files. Question 1 is the headline score; the others can be any scale, including yes/no. For NPS, a prompt of your own must say "press 1 then 0 for 10", as the built-in one does.
 3. **Who gets surveyed.** The minimum talk time (default 20 seconds), the days and hours the survey runs, the share of calls to survey, and how long to wait before asking the same number again (default 30 days).
 4. **Runs on.** The incoming and outgoing routes the survey runs on. Only one active survey can run on a route.

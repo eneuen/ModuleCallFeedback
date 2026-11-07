@@ -29,6 +29,7 @@ use Modules\ModuleCallFeedback\Lib\Results;
 use Modules\ModuleCallFeedback\Lib\ScalePresets;
 use Modules\ModuleCallFeedback\Lib\SurveyEditor;
 use Modules\ModuleCallFeedback\Lib\SurveyRepository;
+use Modules\ModuleCallFeedback\Lib\SurveyTemplates;
 use PDO;
 use Phalcon\Mvc\Dispatcher;
 use Throwable;
@@ -201,12 +202,18 @@ class ModuleCallFeedbackController extends BaseController
         });
     }
 
-    /** POST createSurvey: name, language. */
+    /** POST createSurvey: name, language, template ('' for a blank survey, or a SurveyTemplates key). */
     public function createSurveyAction(): void
     {
-        $this->write(fn (SurveyEditor $editor): array => ['id' => $editor->create(
-            (string)$this->request->getPost('name'), (string)$this->request->getPost('language'), time()
-        )], reload: true);
+        $this->write(function (SurveyEditor $editor): array {
+            $name = (string)$this->request->getPost('name');
+            $language = (string)$this->request->getPost('language');
+            $template = (string)$this->request->getPost('template');
+
+            return ['id' => $template === ''
+                ? $editor->create($name, $language, time())
+                : SurveyTemplates::create($editor, $template, $name, $language, time())];
+        }, reload: true);
     }
 
     /** POST saveSurvey: id, fields (JSON object of SurveyEditor::update() fields). */

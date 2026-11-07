@@ -412,9 +412,40 @@ function showList() {
   loadSurveys();
 }
 
+/** Templates under New Survey, as [default name key, fallback, headline question key, fallback]; "blank" is an empty survey. */
+const TEMPLATES = {
+  csat: ['cf_TemplateNameCsat', 'Customer Satisfaction', 'cf_BuiltInCsat', 'CSAT Question (1–5)'],
+  nps: ['cf_TemplateNameNps', 'Likelihood to Recommend', 'cf_BuiltInNps', 'NPS Question (0–10)'],
+  ces: ['cf_TemplateNameCes', 'Ease of Getting Help', 'cf_BuiltInCes', 'CES Question (1–5)'],
+};
+
+/**
+ * Fills in the name from the chosen template, unless the admin has typed
+ * their own, and says what the template starts with.
+ */
+function applyTemplate() {
+  const template = $id('cf-new-template').value;
+  const nameInput = $id('cf-new-name');
+  const suggested = TEMPLATES[template] ? t(TEMPLATES[template][0], TEMPLATES[template][1]) : '';
+  if (nameInput.value === '' || nameInput.value === nameInput.dataset.suggested) nameInput.value = suggested;
+  nameInput.dataset.suggested = suggested;
+  $id('cf-new-hint').textContent = TEMPLATES[template]
+    ? sub(t('cf_TemplateHint', 'Starts with the built-in intro, the {question}, "Was your issue resolved?" and a thank-you, in the language you choose. Add routes and place a test call, and it\'s ready to go live; everything can be changed first.'),
+      { question: t(TEMPLATES[template][2], TEMPLATES[template][3]) })
+    : t('cf_NewSurveyHint', 'Next you choose the questions, prompts, rules and routes. Nothing runs until you activate it.');
+}
+
+function openNewSurvey() {
+  $id('cf-new-form').classList.remove('cf-hidden');
+  $id('cf-new-name').value = '';
+  applyTemplate();
+  $id('cf-new-name').focus();
+}
+
 function createSurvey(e) {
   e.preventDefault();
-  post('createSurvey', { name: $id('cf-new-name').value, language: $id('cf-new-language').value })
+  const template = $id('cf-new-template').value;
+  post('createSurvey', { name: $id('cf-new-name').value, language: $id('cf-new-language').value, template: template === 'blank' ? '' : template })
     .then((r) => {
       $id('cf-new-form').classList.add('cf-hidden');
       $id('cf-new-name').value = '';
@@ -1399,7 +1430,9 @@ function init() {
   $id('cf-tabs').addEventListener('scroll', updateTabsOverflow);
   $id('cf-new-language').replaceChildren(...Object.keys(LANGUAGES).map((l) => el('option', { value: l }, languageLabel(l))));
   $('#cf-new-language').dropdown();
-  $id('cf-new-survey').addEventListener('click', () => { $id('cf-new-form').classList.remove('cf-hidden'); $id('cf-new-name').focus(); });
+  $('#cf-new-template').dropdown();
+  $id('cf-new-template').addEventListener('change', applyTemplate);
+  $id('cf-new-survey').addEventListener('click', openNewSurvey);
   window.addEventListener('beforeunload', (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
   $id('cf-new-cancel').addEventListener('click', () => $id('cf-new-form').classList.add('cf-hidden'));
   $id('cf-new-form').addEventListener('submit', createSurvey);

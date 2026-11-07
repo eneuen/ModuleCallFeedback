@@ -9,9 +9,10 @@ namespace Modules\ModuleCallFeedback\Lib;
 use PDO;
 
 /**
- * The example survey a new install starts with: a draft that uses the
- * built-in prompts, so an admin can place a test call within a minute of
- * installing the module.
+ * The example survey a new install starts with: a draft from the CSAT
+ * template (SurveyTemplates), which uses the built-in prompts, so an admin
+ * can place a test call within a minute of installing the module. The same
+ * templates are offered under New Survey.
  *
  * It is a draft with no routes, so it can't reach a caller until an admin
  * chooses routes, places a test call and activates it. It carries no results.
@@ -48,17 +49,7 @@ final class ExampleSurvey
         $id = null;
         if (!$hasSurveys) {
             $language = isset(self::NAMES[$language]) ? $language : 'en-en';
-            $editor = new SurveyEditor($module, $config);
-            $id = $editor->create(self::NAMES[$language], $language, $now);
-            $editor->update($id, [
-                'intro_prompt_id'   => (string)BuiltInPrompts::id('intro'),
-                'invalid_prompt_id' => (string)BuiltInPrompts::id('invalid'),
-                'thanks_prompt_id'  => (string)BuiltInPrompts::id('thanks'),
-                'questions'         => [
-                    ['scale' => ScalePresets::CSAT, 'prompt_id' => (string)BuiltInPrompts::id('q-csat'), 'timeout_seconds' => '6', 'retries' => '2'],
-                    ['scale' => ScalePresets::YES_NO, 'prompt_id' => (string)BuiltInPrompts::id('q-resolved'), 'timeout_seconds' => '6', 'retries' => '2'],
-                ],
-            ]);
+            $id = SurveyTemplates::create(new SurveyEditor($module, $config), 'csat', self::NAMES[$language], $language, $now);
         }
         $module->prepare('INSERT INTO ' . ModuleSettings::TABLE . ' (name, value) VALUES (?, ?)')
             ->execute([self::MARKER, (string)$now]);

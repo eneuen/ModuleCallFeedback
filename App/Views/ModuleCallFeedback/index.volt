@@ -116,6 +116,17 @@
             </div>
             <form class="ui form cf-hidden cf-inline-form" id="cf-new-form">
                 <div class="fields">
+                    <div class="sixteen wide field">
+                        <label for="cf-new-template">{{ t._('cf_StartFrom')|e }}</label>
+                        <select id="cf-new-template" class="ui dropdown">
+                            <option value="csat" selected>{{ t._('cf_TemplateCsat')|e }}</option>
+                            <option value="nps">{{ t._('cf_TemplateNps')|e }}</option>
+                            <option value="ces">{{ t._('cf_TemplateCes')|e }}</option>
+                            <option value="blank">{{ t._('cf_TemplateBlank')|e }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="fields">
                     <div class="eight wide field">
                         <label for="cf-new-name">{{ t._('cf_Name')|e }}</label>
                         <input type="text" id="cf-new-name" maxlength="60" required placeholder="{{ t._('cf_NewSurveyPlaceholder')|e }}">
@@ -129,7 +140,7 @@
                         <button class="ui basic button" type="button" id="cf-new-cancel">{{ t._('cf_Cancel')|e }}</button>
                     </div>
                 </div>
-                <p class="cf-note">{{ t._('cf_NewSurveyHint')|e }}</p>
+                <p class="cf-note" id="cf-new-hint"></p>
             </form>
             <table class="ui very basic table cf-table" id="cf-surveys"></table>
         </div>

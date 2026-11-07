@@ -79,7 +79,7 @@ The unit tests run against SQLite files built from the module's model annotation
 | `Lib/Attribution.php`, `Lib/CallIndexer.php`, `Lib/CdrReader.php` | Agent, queue and talk time from the call's CDR legs. `CallIndexer` is shared with the Call Insights module, with its tests and fixtures |
 | `Lib/SurveyEditor.php`, `Lib/SurveyRepository.php` | Survey versions, questions, rules and targets: every change validated, activation checks |
 | `Lib/BuiltInPrompts.php`, `Sounds/` | The module's own prompts: their IDs and names, and the recordings in `Sounds/en-en` and `Sounds/ru-ru` |
-| `Lib/ExampleSurvey.php` | The draft example survey a new install starts with |
+| `Lib/SurveyTemplates.php`, `Lib/ExampleSurvey.php` | The templates offered under New Survey, and the example survey (the CSAT template) a new install starts with |
 | `Lib/ScalePresets.php`, `Lib/Scores.php` | The answer scales and how a score is worked out |
 | `Lib/Results.php` | Overview, Breakdowns and Survey health |
 | `Lib/FollowUps.php`, `Lib/CallBacks.php`, `Lib/AlertMessage.php`, `Lib/SummaryMessage.php` | Detractor cases, call-backs with their safeguards, alert and summary emails |
