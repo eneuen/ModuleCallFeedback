@@ -52,6 +52,16 @@ The module adds its survey through MikoPBX's module dialplan hooks; it doesn't e
 - **Recording results:** answers are kept in channel variables during the survey. When the customer's channel ends, a hangup handler runs the module's AGI script once. It checks every value against a fixed pattern and passes the record to the module's worker over the PBX's internal Beanstalk queue. The worker checks it again, keeps only answers that are on the question's scale, and stores the session, so a caller who hangs up after the first question still counts.
 - **Attribution:** once the call is in the CDR, the worker fills in the answering agent, the queue and the call's real talk time from its CDR legs (the same leg-stitching logic as the Call Insights module). A session under the minimum talk time is kept but left out of scores, and a session whose call never appears in the CDR is discarded. Only then does a low score open a follow-up and send the alert.
 - **Limits:** `TIMEOUT(absolute)` ends every survey within 3 minutes, and a `GROUP_COUNT` check caps the surveys running at once.
+- **Built-in prompts:** `Sounds/<language>/<key>.wav` (8 kHz, 16-bit mono WAV) are copied by the core into Asterisk's sound folder for that language as `modulecallfeedback-<key>` when the module is enabled, converted to its other formats, and removed when it is disabled. The language folders are the codes a survey sets with `CHANNEL(language)`, so the dialplan plays `modulecallfeedback-<key>` with no path and Asterisk picks the survey's language. A survey stores them as negative prompt IDs (`BuiltInPrompts::IDS`); the PBX's sound-file IDs are positive. To add one, add its key to `BuiltInPrompts::IDS`, a recording in each language folder, and a label in the page script and `Messages/`.
+
+New or re-recorded prompts are converted from the original recording (any format ffmpeg reads) the same way as the shipped ones, so every prompt has the same level and a short pad at each end:
+
+```bash
+ffmpeg -i original.mp3 -af "highpass=f=90,loudnorm=I=-19:TP=-3:LRA=11,adelay=150,apad=pad_dur=0.25,aresample=8000" \
+  -ac 1 -ar 8000 -c:a pcm_s16le -map_metadata -1 -fflags +bitexact -flags:a +bitexact Sounds/en-en/<key>.wav
+```
+
+The recordings are CC0 (`Sounds/LICENSE`); a contribution to them must be too.
 
 The unit tests run against SQLite files built from the module's model annotations and from calls recorded on a real PBX (`tests/fixtures/cdr`). [tools/callsim](tools/callsim/README.md) places real SIP calls through a disposable MikoPBX test instance with softphones and a fake carrier; its `probe.py` runs the survey scenarios (inbound, outbound, transfers, rules, test calls, call-backs) and checks both the dialplan's decisions and what the worker stored.
 
@@ -68,6 +78,8 @@ The unit tests run against SQLite files built from the module's model annotation
 | `Lib/FeedbackStore.php` | Writes sessions, answers and skip counts to the module database |
 | `Lib/Attribution.php`, `Lib/CallIndexer.php`, `Lib/CdrReader.php` | Agent, queue and talk time from the call's CDR legs. `CallIndexer` is shared with the Call Insights module, with its tests and fixtures |
 | `Lib/SurveyEditor.php`, `Lib/SurveyRepository.php` | Survey versions, questions, rules and targets: every change validated, activation checks |
+| `Lib/BuiltInPrompts.php`, `Sounds/` | The module's own prompts: their IDs and names, and the recordings in `Sounds/en-en` and `Sounds/ru-ru` |
+| `Lib/ExampleSurvey.php` | The draft example survey a new install starts with |
 | `Lib/ScalePresets.php`, `Lib/Scores.php` | The answer scales and how a score is worked out |
 | `Lib/Results.php` | Overview, Breakdowns and Survey health |
 | `Lib/FollowUps.php`, `Lib/CallBacks.php`, `Lib/AlertMessage.php`, `Lib/SummaryMessage.php` | Detractor cases, call-backs with their safeguards, alert and summary emails |

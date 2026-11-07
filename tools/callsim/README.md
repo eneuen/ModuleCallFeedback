@@ -69,7 +69,7 @@ python3 tools/callsim/probe.py run          # all scenarios, or name some
 
 Each scenario places a call, presses survey keys from the customer's side once the agent hangs up, and checks what happened: whether the survey was offered, the agent's talk time, that the survey's hangup handler ran once, and what the worker stored (session status and answers, attribution from the CDR, follow-ups, skip counts). Attribution waits up to about a minute for the worker.
 
-Some scenarios use the module page's own actions with the admin's token, as the page does: a test call from the survey editor, an excluded number, and a frequency cap. They put the settings back afterwards. One scenario adds an IVR action (4 → hangup) for its own duration. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed).
+Some scenarios use the module page's own actions with the admin's token, as the page does: a test call from the survey editor, an excluded number, and a frequency cap. They put the settings back afterwards. The two built-in prompts scenarios each create their own draft (one Russian with the CSAT question, one English with the CES question) that uses only the module's built-in prompts, place a test call, check in Asterisk's log that each prompt played in the survey's language and none was missing, and delete the draft. It needs the module's `Sounds/` recordings installed (they are, whenever the module is enabled). One scenario adds an IVR action (4 → hangup) for its own duration. Results are printed and saved to `tools/callsim/probe-results/` (local only, never committed).
 
 ## Files
 

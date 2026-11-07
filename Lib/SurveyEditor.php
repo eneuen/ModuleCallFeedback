@@ -179,7 +179,7 @@ final class SurveyEditor
     /**
      * Why a version can't be activated yet; empty when it can.
      *
-     * @param callable(int): bool $promptUsable Whether a sound file ID can be played.
+     * @param callable(int, string): bool $promptUsable Whether a prompt ID can be played in a survey language.
      *
      * @return list<string> Message keys (translated by the page).
      */
@@ -208,7 +208,7 @@ final class SurveyEditor
             $problems[] = 'cf_ProblemMissingPrompt';
         }
         foreach ($ids as $id) {
-            if (!$promptUsable($id)) {
+            if (!$promptUsable($id, $survey['language'])) {
                 $problems[] = 'cf_ProblemPromptMissingFile';
                 break;
             }
@@ -238,7 +238,7 @@ final class SurveyEditor
     /**
      * Makes a draft live and archives the family's active version.
      *
-     * @param callable(int): bool $promptUsable
+     * @param callable(int, string): bool $promptUsable
      *
      * @throws InvalidArgumentException With the first problem when it can't be activated.
      */
@@ -562,10 +562,18 @@ final class SurveyEditor
         return $language;
     }
 
+    /** A PBX sound-file ID, or one of the module's built-in prompts (negative IDs). */
     private static function promptId(mixed $value): ?int
     {
         if ($value === null || $value === '' || $value === '0' || $value === 0) {
             return null;
+        }
+        if ((is_string($value) && preg_match('/^-[1-9][0-9]{0,2}$/', $value) === 1) || (is_int($value) && $value < 0)) {
+            if (!BuiltInPrompts::isBuiltIn((int)$value)) {
+                throw new InvalidArgumentException('Unknown built-in prompt.');
+            }
+
+            return (int)$value;
         }
 
         return self::integer('prompt', $value, 1, PHP_INT_MAX);

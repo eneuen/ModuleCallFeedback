@@ -186,8 +186,10 @@ function message(box, kind, text, items = []) {
     items.length ? el('ul', { class: 'list' }, items.map((i) => el('li', { text: i }))) : null));
 }
 
+/** A select from [value, text] pairs; an entry { group, options } becomes a labelled group of them. */
 function select(id, options, value, attrs = {}) {
-  return el('select', { id, ...attrs }, options.map(([v, text]) => el('option', { value: String(v), selected: String(v) === String(value ?? '') }, text)));
+  const option = ([v, text]) => el('option', { value: String(v), selected: String(v) === String(value ?? '') }, text);
+  return el('select', { id, ...attrs }, options.map((o) => (Array.isArray(o) ? option(o) : el('optgroup', { label: o.group }, o.options.map(option)))));
 }
 
 function field(labelText, control, hint, width) {
@@ -204,9 +206,26 @@ function statusLabel(status) {
   return el('span', { class: `ui ${s[2]} small label`, text: label(s) });
 }
 
+/** The module's built-in prompts, by key, as [label key, fallback]. */
+const BUILT_IN_PROMPTS = {
+  intro: ['cf_BuiltInIntro', 'Intro'],
+  thanks: ['cf_BuiltInThanks', 'Thank You'],
+  invalid: ['cf_BuiltInInvalid', 'Invalid Key'],
+  'q-csat': ['cf_BuiltInCsat', 'CSAT Question (1–5)'],
+  'q-nps': ['cf_BuiltInNps', 'NPS Question (0–10)'],
+  'q-ces': ['cf_BuiltInCes', 'CES Question (1–5)'],
+  'q-resolved': ['cf_BuiltInResolved', 'Issue Resolved? (Yes or No)'],
+};
+
+/** Prompt choices: the built-in prompts (played in the survey's language), then the PBX's sound files. */
 function soundOptions(withNone) {
+  const builtIn = state.options.builtInPrompts.map((p) => [p.id, BUILT_IN_PROMPTS[p.key] ? label(BUILT_IN_PROMPTS[p.key]) : p.key]);
   const files = state.options.soundFiles.map((f) => [f.id, f.name]);
-  return withNone ? [['', t('cf_NoSound', '— None —')], ...files] : [['', t('cf_ChooseSound', '— Choose a Sound File —')], ...files];
+  return [
+    withNone ? ['', t('cf_NoSound', '— None —')] : ['', t('cf_ChooseSound', '— Choose a Prompt —')],
+    builtIn.length ? { group: t('cf_BuiltInPrompts', 'Built-in Prompts'), options: builtIn } : null,
+    files.length ? { group: t('cf_YourSoundFiles', 'Your Sound Files'), options: files } : null,
+  ].filter(Boolean);
 }
 
 const extensionOptions = () => state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
@@ -470,10 +489,10 @@ function renderEditor(data) {
     el('div', { class: 'fields' },
       field(t('cf_Name', 'Name'), el('input', { type: 'text', id: 'cf-name', maxlength: '60', value: s.name, disabled: !draft }), null, 'ten'),
       field(t('cf_Language', 'Language'), select('cf-language', Object.keys(LANGUAGES).map((l) => [l, languageLabel(l)]), s.language, { disabled: !draft }),
-        t('cf_LanguageHint', 'Record the prompts in this language.'), 'six')),
+        t('cf_LanguageHint', 'Built-in prompts play in this language. Record your own prompts in it too.'), 'six')),
 
     el('h4', { class: 'ui dividing header', text: t('cf_SectionPrompts', 'Prompts') }),
-    el('p', { class: 'cf-note', text: t('cf_PromptsHint', 'Prompts are sound files from Sound files (Phrase Studio can generate them). Upload them there first.') }),
+    el('p', { class: 'cf-note', text: t('cf_PromptsHint', 'Use the built-in prompts, which play in the survey\'s language, or your own recordings from Sound files (upload them there first; Phrase Studio can generate them).') }),
     el('div', { class: 'three fields' }, PROMPT_FIELDS.map(([name, key, fallback, hintKey, hint]) =>
       field(t(key, fallback), select(`cf-${name}`, soundOptions(name === 'invalid_prompt_id'), s[name], { disabled: !draft }), t(hintKey, hint)))),
 

@@ -16,6 +16,7 @@ use MikoPBX\Core\Workers\Libs\WorkerModelsEvents\Actions\ReloadDialplanAction;
 use MikoPBX\Core\Workers\WorkerModelsEvents;
 use MikoPBX\Modules\PbxExtensionUtils;
 use Modules\ModuleCallFeedback\Lib\AccessPolicy;
+use Modules\ModuleCallFeedback\Lib\BuiltInPrompts;
 use Modules\ModuleCallFeedback\Lib\CallBacks;
 use Modules\ModuleCallFeedback\Lib\CallFeedbackConf;
 use Modules\ModuleCallFeedback\Lib\CdrReader;
@@ -154,6 +155,7 @@ class ModuleCallFeedbackController extends BaseController
             return [
                 'routes'     => ConfigOptions::routes($config, new SurveyEditor($this->moduleDb(), $config)),
                 'soundFiles' => ConfigOptions::soundFiles($config),
+                'builtInPrompts' => BuiltInPrompts::catalogue(),
                 'extensions' => ConfigOptions::extensions($config),
                 'scales'     => ScalePresets::all(),
                 'languages'  => DialplanBuilder::LANGUAGES,
@@ -495,10 +497,14 @@ class ModuleCallFeedbackController extends BaseController
         return $value;
     }
 
-    /** @return callable(int): bool */
+    /** @return callable(int, string): bool Whether a prompt ID can be played in a survey language. */
     private function promptUsable(): callable
     {
-        return fn (int $id): bool => DialplanBuilder::isUsablePath(CallFeedbackConf::promptPath($id));
+        $moduleDir = PbxExtensionUtils::getModuleDir(CallFeedbackConf::MODULE_ID);
+
+        return fn (int $id, string $language = DialplanBuilder::LANGUAGES[0]): bool => BuiltInPrompts::isBuiltIn($id)
+            ? BuiltInPrompts::available($moduleDir, $id, $language)
+            : DialplanBuilder::isUsablePath(CallFeedbackConf::promptPath($id));
     }
 
     private function mailEnabled(): bool

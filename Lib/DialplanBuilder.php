@@ -84,6 +84,7 @@ final class DialplanBuilder
      * @param list<array{survey_id: int, direction: string, route_id: int}> $targets Active targets.
      * @param array<int, array{provider: string, number: string}> $incomingRoutes Incoming routes by ID.
      * @param callable(int): ?string $promptPath Sound file ID => path for Playback, without extension.
+     *        Built-in prompts (negative IDs) never reach it: they play by their fixed name.
      * @param list<string> $exclusions
      */
     public function __construct(
@@ -256,6 +257,10 @@ final class DialplanBuilder
     /** @param callable(int): ?string $promptPath */
     private static function path(callable $promptPath, mixed $id): ?string
     {
+        if ($id !== null && BuiltInPrompts::isBuiltIn((int)$id)) {
+            // A fixed name from the module's own list; Asterisk picks the survey's language folder.
+            return BuiltInPrompts::playbackName((int)$id);
+        }
         if ($id === null || (int)$id <= 0) {
             return null;
         }

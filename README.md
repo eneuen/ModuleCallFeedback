@@ -10,13 +10,14 @@ A MikoPBX extension module that asks your callers how the call went. When the ag
 
 ## Features
 
-- **Surveys** on chosen incoming and outgoing routes: up to three questions on fixed scales (CSAT, NPS, CES, yes/no), your own recorded prompts, and rules for minimum talk time, days and hours, the share of calls to survey and how often the same number is asked. A test call plays the survey to an extension before it goes live.
+- **Surveys** on chosen incoming and outgoing routes: up to three questions on fixed scales (CSAT, NPS, CES, yes/no), built-in English and Russian prompts or your own recordings, and rules for minimum talk time, days and hours, the share of calls to survey and how often the same number is asked. A test call plays the survey to an extension before it goes live.
 - **Results:** the headline score with its change from the previous period, response and resolution rates, the score over time, and the score by agent, queue, line, direction, hour, weekday, time to answer or talk time. Scores stay hidden until a group has enough responses.
 - **Survey health:** how many eligible calls were surveyed, how many callers reached the end, the question where most of them leave, and how many calls each rule left out.
 - **Follow-ups:** a low score opens a case with an email alert. Cases have a status and a note, and a call-back rings an agent's extension and then the customer, with safeguards against calling expensive numbers.
 - **Versions:** once a survey is live its wording is fixed, so results stay comparable. Changing it means a new version, and versions are never averaged together.
 - **Exports:** CSV of any results table, PNG of any chart, and an optional daily or weekly summary email.
-- **Languages:** English and Russian, following the admin cabinet's language. Survey prompts can be in either language.
+- **Ready to try:** a new install starts with an example survey that uses the built-in prompts, so you can hear a survey on your own phone a minute after installing.
+- **Languages:** English and Russian, following the admin cabinet's language. Each survey plays its prompts in English or Russian.
 
 ## Screenshots
 
@@ -65,7 +66,7 @@ The screenshots show a test PBX with simulated calls.
 
 - MikoPBX 2026.6.34 or later.
 - An admin account on the PBX: the module's pages are shown to admins only.
-- Your survey prompts as sound files: an intro, one per question, a thank-you and, optionally, an "invalid key" prompt. Upload them under **Sound files**; MIKO's Phrase Studio module can generate them.
+- Nothing to record to get started: the module ships prompts in English and Russian for the intro, CSAT, NPS, CES and "was your issue resolved?" questions, an invalid key and a thank-you. To use your own wording, upload recordings under **Sound files** (MIKO's Phrase Studio module can generate them) and choose them in the survey.
 - For alert and summary emails: the PBX's mail settings, with email notifications switched on.
 
 A survey can't be activated while:
@@ -83,16 +84,18 @@ Incoming routes that match numbers by pattern can't be surveyed; routes for a si
 
 Call Feedback appears in the sidebar for admins. No call changes until you activate a survey.
 
+**Try it:** open **Modules → Call Feedback → Surveys → Example Survey**, choose your extension under **Test call** and press **Place Test Call**. Your phone rings and plays the survey as a caller would hear it. The example is a draft with no routes, so it never reaches a real caller until you choose routes and activate it. It's in Russian when the PBX's prompt language is Russian.
+
 **Updating:** upload the newer zip on the same page. Surveys, results, follow-ups and settings are kept.
 
-**Uninstalling:** disable and delete the module on the same page. Its survey steps leave every call straight away. Unless you choose to keep its settings, its database (surveys, answers, follow-ups, settings) is deleted with it.
+**Uninstalling:** disable and delete the module on the same page. Its survey steps leave every call straight away, and its built-in prompts are removed from the PBX's sound folders. Unless you choose to keep its settings, its database (surveys, answers, follow-ups, settings) is deleted with it.
 
 ## Setting up a survey
 
 Everything is under **Modules → Call Feedback**.
 
 1. **Surveys → New Survey.** Give it a name and choose the prompt language.
-2. **Prompts and questions.** Choose the intro, thank-you and (optionally) invalid-key prompts, and up to three questions. Question 1 is the headline score; the others can be any scale, including yes/no. For NPS, the prompt must say "press 1 then 0 for 10".
+2. **Prompts and questions.** Choose the intro, thank-you and (optionally) invalid-key prompts, and up to three questions. Each prompt menu lists the built-in prompts first, which play in the survey's language, then your own sound files. Question 1 is the headline score; the others can be any scale, including yes/no. For NPS, a prompt of your own must say "press 1 then 0 for 10", as the built-in one does.
 3. **Who gets surveyed.** The minimum talk time (default 20 seconds), the days and hours the survey runs, the share of calls to survey, and how long to wait before asking the same number again (default 30 days).
 4. **Runs on.** The incoming and outgoing routes the survey runs on. Only one active survey can run on a route.
 5. **Test call.** Ring an extension and answer the survey as a caller would. A version needs a test call before it can go live.
@@ -145,6 +148,6 @@ Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE). The bundled Apache ECharts is Apache-2.0; its licence and notice are in `public/assets/js/vendor/`.
+GPL-3.0-or-later. See [LICENSE](LICENSE). The built-in prompts in `Sounds/` are dedicated to the public domain under CC0 1.0 (see [Sounds/LICENSE](Sounds/LICENSE)), so you can reuse them anywhere. The bundled Apache ECharts is Apache-2.0; its licence and notice are in `public/assets/js/vendor/`.
 
 Net Promoter, NPS and Net Promoter Score are registered trademarks of Bain & Company, Inc., Satmetrix Systems, Inc. and Fred Reichheld.

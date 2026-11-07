@@ -149,7 +149,8 @@
     ));
   }
   function select(id, options, value, attrs = {}) {
-    return el("select", { id, ...attrs }, options.map(([v, text]) => el("option", { value: String(v), selected: String(v) === String(value != null ? value : "") }, text)));
+    const option = ([v, text]) => el("option", { value: String(v), selected: String(v) === String(value != null ? value : "") }, text);
+    return el("select", { id, ...attrs }, options.map((o) => Array.isArray(o) ? option(o) : el("optgroup", { label: o.group }, o.options.map(option))));
   }
   function field(labelText, control, hint, width) {
     return el(
@@ -167,9 +168,23 @@
     const s = STATUSES[status] || [status, status, ""];
     return el("span", { class: `ui ${s[2]} small label`, text: label(s) });
   }
+  var BUILT_IN_PROMPTS = {
+    intro: ["cf_BuiltInIntro", "Intro"],
+    thanks: ["cf_BuiltInThanks", "Thank You"],
+    invalid: ["cf_BuiltInInvalid", "Invalid Key"],
+    "q-csat": ["cf_BuiltInCsat", "CSAT Question (1\u20135)"],
+    "q-nps": ["cf_BuiltInNps", "NPS Question (0\u201310)"],
+    "q-ces": ["cf_BuiltInCes", "CES Question (1\u20135)"],
+    "q-resolved": ["cf_BuiltInResolved", "Issue Resolved? (Yes or No)"]
+  };
   function soundOptions(withNone) {
+    const builtIn = state.options.builtInPrompts.map((p) => [p.id, BUILT_IN_PROMPTS[p.key] ? label(BUILT_IN_PROMPTS[p.key]) : p.key]);
     const files = state.options.soundFiles.map((f) => [f.id, f.name]);
-    return withNone ? [["", t("cf_NoSound", "\u2014 None \u2014")], ...files] : [["", t("cf_ChooseSound", "\u2014 Choose a Sound File \u2014")], ...files];
+    return [
+      withNone ? ["", t("cf_NoSound", "\u2014 None \u2014")] : ["", t("cf_ChooseSound", "\u2014 Choose a Prompt \u2014")],
+      builtIn.length ? { group: t("cf_BuiltInPrompts", "Built-in Prompts"), options: builtIn } : null,
+      files.length ? { group: t("cf_YourSoundFiles", "Your Sound Files"), options: files } : null
+    ].filter(Boolean);
   }
   var extensionOptions = () => state.options.extensions.map((x) => [x.number, x.name ? `${x.name} (${x.number})` : x.number]);
   function routeText(direction, id) {
@@ -470,12 +485,12 @@
         field(
           t("cf_Language", "Language"),
           select("cf-language", Object.keys(LANGUAGES).map((l) => [l, languageLabel(l)]), s.language, { disabled: !draft }),
-          t("cf_LanguageHint", "Record the prompts in this language."),
+          t("cf_LanguageHint", "Built-in prompts play in this language. Record your own prompts in it too."),
           "six"
         )
       ),
       el("h4", { class: "ui dividing header", text: t("cf_SectionPrompts", "Prompts") }),
-      el("p", { class: "cf-note", text: t("cf_PromptsHint", "Prompts are sound files from Sound files (Phrase Studio can generate them). Upload them there first.") }),
+      el("p", { class: "cf-note", text: t("cf_PromptsHint", "Use the built-in prompts, which play in the survey's language, or your own recordings from Sound files (upload them there first; Phrase Studio can generate them).") }),
       el("div", { class: "three fields" }, PROMPT_FIELDS.map(([name, key, fallback, hintKey, hint]) => field(t(key, fallback), select(`cf-${name}`, soundOptions(name === "invalid_prompt_id"), s[name], { disabled: !draft }), t(hintKey, hint)))),
       el("h4", { class: "ui dividing header", text: t("cf_SectionQuestions", "Questions") }),
       el("div", { id: "cf-questions" }, Object.keys(s.questions).sort().map((pos, i) => questionBlock(s.questions[pos], i, draft))),

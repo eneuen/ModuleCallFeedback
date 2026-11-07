@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace Modules\ModuleCallFeedback\Tests\Unit\Support;
 
+use Modules\ModuleCallFeedback\Lib\BuiltInPrompts;
 use Modules\ModuleCallFeedback\Lib\FeedbackStore;
 use Modules\ModuleCallFeedback\Lib\ScalePresets;
 use Modules\ModuleCallFeedback\Lib\SurveyEditor;
@@ -28,9 +29,10 @@ final class Surveys
         return self::PROMPTS[$id] ?? null;
     }
 
-    public static function promptUsable(int $id): bool
+    /** The fake sound files, and every built-in prompt as if the module shipped all of them. */
+    public static function promptUsable(int $id, string $language = 'en-en'): bool
     {
-        return isset(self::PROMPTS[$id]);
+        return isset(self::PROMPTS[$id]) || BuiltInPrompts::isBuiltIn($id);
     }
 
     /**

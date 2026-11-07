@@ -533,6 +533,80 @@ def editor_test_call(lines):
     a.ringing(); pause(1); a.answer(); pause(1.5); a.keys("4"); pause(1.5); a.keys("9"); pause(4); safe_hangup(a)
 
 
+BUILT_IN = {"name": "CallSim built-in prompts", "id": None, "since": 0}
+LANGUAGE_NAMES = {"ru-ru": "Russian", "en-en": "English"}
+
+
+def wait_for_log(since_bytes, pattern, timeout=30):
+    """Waits until the Asterisk verbose log, from the offset, has a line matching `pattern`."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        out = docker("exec", PBX_CONTAINER, "sh", "-c", f"tail -c +{since_bytes + 1} {MESSAGES_LOG}", capture=True)
+        if re.search(pattern, out):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def built_in_played(language, headline, answers):
+    """Expectation: each built-in prompt played in `language`, none was missing, and `answers` were stored.
+    Deletes the scenario's draft afterwards, with its test call."""
+    def check(result):
+        problems = []
+        try:
+            log = docker("exec", PBX_CONTAINER, "sh", "-c", f"tail -c +{BUILT_IN['since'] + 1} {MESSAGES_LOG}", capture=True)
+            for key in ("intro", headline, "q-resolved", "thanks"):
+                if not re.search(rf"Playing '(?:[^']*/)?modulecallfeedback-{key}\.\w+' \(language '{language}'\)", log):
+                    problems.append(f"modulecallfeedback-{key} did not play in {LANGUAGE_NAMES[language]}")
+            if re.search(r"modulecallfeedback-[a-z-]+.*does not exist|File modulecallfeedback", log):
+                problems.append("a built-in prompt file was missing")
+            sessions = result["sessions"]
+            if len(sessions) != 1 or sessions[0]["answers"] != answers:
+                problems.append(f"stored {[s['answers'] for s in sessions]}, expected one test session with {answers}")
+        finally:
+            if BUILT_IN["id"]:
+                page_post("deleteSurvey", {"id": BUILT_IN["id"]})
+                BUILT_IN["id"] = None
+        return problems
+    return check
+
+
+def built_in_test_call(lines, language, headline, scale, keys):
+    """Creates a draft in `language` using only built-in prompts, places a test call to 301, and answers
+    each question as it starts playing (the intro is Playback, so keys are only heard during a question)."""
+    fields = {"intro_prompt_id": "-1", "invalid_prompt_id": "-3", "thanks_prompt_id": "-2", "questions": [
+        {"scale": scale, "prompt_id": str(BUILT_IN_IDS[headline]), "timeout_seconds": "10", "retries": "0"},
+        {"scale": "yesno", "prompt_id": "-7", "timeout_seconds": "10", "retries": "0"}]}
+    BUILT_IN["id"] = page_post("createSurvey", {"name": BUILT_IN["name"], "language": language})["id"]
+    page_post("saveSurvey", {"id": BUILT_IN["id"], "fields": json.dumps(fields)})
+    BUILT_IN["since"] = log_size()
+    a = lines["301"]
+    page_post("testCall", {"id": BUILT_IN["id"], "extension": "301"})
+    a.ringing(); pause(1); a.answer()
+    for key, digit in zip((headline, "q-resolved"), keys):
+        if not wait_for_log(BUILT_IN["since"], rf"Playing '[^']*modulecallfeedback-{key}\."):
+            raise RuntimeError(f"modulecallfeedback-{key} never started")
+        pause(1); a.keys(digit)
+    wait_for_log(BUILT_IN["since"], r"Playing '[^']*modulecallfeedback-thanks\.")
+    pause(4); safe_hangup(a)
+
+
+BUILT_IN_IDS = {"q-csat": -4, "q-ces": -6}
+
+
+@scenario("Built-in prompts in Russian: a draft using only the module's own prompts (CSAT) places a test call to "
+          "301; 301 waits for each question, presses 4 then 1. Each prompt plays in Russian and none is missing.",
+          built_in_played("ru-ru", "q-csat", {"1": "4", "2": "1"}))
+def built_in_prompts(lines):
+    built_in_test_call(lines, "ru-ru", "q-csat", "csat5", ("4", "1"))
+
+
+@scenario("Built-in prompts in English: the same with the CES question; 301 presses 5 then 2. Each prompt plays "
+          "in English and none is missing (a \"no\" is stored as 0).", built_in_played("en-en", "q-ces", {"1": "5", "2": "0"}))
+def built_in_prompts_en(lines):
+    built_in_test_call(lines, "en-en", "q-ces", "ces5", ("5", "2"))
+
+
 @scenario("Outbound 301 -> carrier, answered after 2 s, 6 s talk, 301 hangs up; the customer "
           "presses 3, then 0 (NPS 0).", surveyed("out", {"1": "3", "2": "0"}, 6, "301"))
 def out_answered(lines):

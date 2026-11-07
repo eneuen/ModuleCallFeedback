@@ -205,6 +205,24 @@ final class SurveyEditorTest extends TestCase
         $this->editor->update($id, ['sample_percent' => '10']);
     }
 
+    public function testPromptsCanBeBuiltInButNotMadeUp(): void
+    {
+        $id = $this->editor->create('Survey', 'en-en', Surveys::NOW);
+        $this->editor->update($id, ['intro_prompt_id' => '-1', 'questions' => [['scale' => ScalePresets::NPS, 'prompt_id' => '-5']]]);
+
+        $survey = $this->repository->find($id);
+        self::assertSame([-1, -5], [$survey['intro_prompt_id'], $survey['questions'][1]['prompt_id']]);
+
+        foreach (['-99', '-1abc', '--1'] as $bad) {
+            try {
+                $this->editor->update($id, ['thanks_prompt_id' => $bad]);
+                self::fail("Accepted prompt $bad");
+            } catch (InvalidArgumentException) {
+                self::assertNull($this->repository->find($id)['thanks_prompt_id']);
+            }
+        }
+    }
+
     public function testDeletingADraftKeepsTheLiveVersion(): void
     {
         $v1 = Surveys::complete($this->editor, $this->module, [self::IN_DIRECT]);
