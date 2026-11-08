@@ -4,7 +4,7 @@
 
 A MikoPBX extension module that asks your callers how the call went. When the agent hangs up, the caller stays on the line for a short keypad survey: one headline score (CSAT 1–5, NPS 0–10 or CES 1–5) and up to two more questions, such as "was your issue resolved?". Every answer is tied to the call, its agent and its queue, and the admin cabinet shows the results, where callers drop out of the survey, and a follow-up list with email alerts for unhappy callers.
 
-> **Status: in development, not released yet.** It works on MikoPBX 2026.6.34 and is tested with real calls, but it isn't ready for production use. Releases will be on the [Releases page](https://github.com/eneuen/ModuleCallFeedback/releases), and what changes in each version is in [CHANGELOG.md](CHANGELOG.md).
+> Download the latest version from the [Releases page](https://github.com/eneuen/ModuleCallFeedback/releases). What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ![The Overview tab: the CSAT score and its change from the previous period, the response rate, the share of issues resolved, open follow-ups, and the score by week](docs/screenshots/overview.png)
 

@@ -4,6 +4,8 @@ All notable changes to this module are listed here. Versions follow [Semantic Ve
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-08
+
 The first version of Call Feedback: a post-call keypad survey for MikoPBX 2026.6.34 or later.
 
 Added:
