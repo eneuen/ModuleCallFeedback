@@ -148,7 +148,8 @@ const languageLabel = (l) => (LANGUAGES[l] ? label(LANGUAGES[l]) : l);
 const problemLabel = (key) => t(key, PROBLEMS[key] || key);
 /** The admin cabinet's language, which the page sets on <html>; dates and numbers follow it, not the browser's. */
 const LOCALE = document.documentElement.lang || undefined;
-const dateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(LOCALE) : '—');
+/** "6 Nov 2026, 14:05": the list's format with the year, for the follow-up dialog. */
+const dateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 /** "6 Nov, 14:05": short enough for a table column. */
 const shortDateTime = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 const shortDate = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
@@ -828,11 +829,14 @@ function testCallList(data) {
         el('td', { text: shortDateTime(c.ended_at) }),
         el('td', { text: c.caller_num || '' }),
         el('td', { text: Object.keys(c.answers).length === 0 ? t('cf_NoKeys', 'No keys pressed')
-          : Object.keys(c.answers).sort().map((pos) => `${t('cf_Q', 'Q')}${pos}: ${answerText(questions[pos], c.answers[pos])}`).join(' · ') })))));
+          : Object.keys(c.answers).sort().map((pos) => answerPart((questions[pos] || {}).scale, pos, answerText(questions[pos], c.answers[pos]))).join(' · ') })))));
 }
 
 /** A follow-up's answer to one question, with yes/no shown as words. */
 const followAnswer = (f, pos) => answerText({ scale: (f.scales || {})[pos] }, f.answers[pos]);
+
+/** "NPS: 7" for a scored question, "Q2: yes" for a yes/no one. */
+const answerPart = (scale, pos, text) => `${METRICS[scale] ? metricName(scale) : `${t('cf_Q', 'Q')}${pos}`}: ${text}`;
 
 function answerText(question, value) {
   if (question && question.scale === 'yesno') return value === 1 ? t('cf_Yes', 'yes') : t('cf_No', 'no');
@@ -1042,7 +1046,7 @@ function loadSettings() {
           el('tbody', {}, data.exclusions.map((x) => el('tr', {},
             el('td', { text: x.number }),
             el('td', { class: 'cf-muted', text: x.note || '' }),
-            el('td', { class: 'cf-muted cf-nowrap', text: x.created_at ? new Date(x.created_at * 1000).toLocaleDateString(LOCALE) : '' }),
+            el('td', { class: 'cf-muted cf-nowrap', text: x.created_at ? new Date(x.created_at * 1000).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) : '' }),
             el('td', { class: 'cf-num' }, el('button', { class: 'ui basic mini button', type: 'button', text: t('cf_Remove', 'Remove'),
               onclick: () => post('removeExclusion', { id: x.id }).then(() => loadSettings(),
                 (xhr) => message(exclusionsResult, 'negative', saveFailed(xhr))) }))))))));
@@ -1481,7 +1485,7 @@ function loadFollowUps(page = 1) {
       return;
     }
     const rows = data.rows.map((f) => {
-      const others = Object.keys(f.answers).filter((pos) => pos !== '1').sort().map((pos) => `${t('cf_Q', 'Q')}${pos}: ${followAnswer(f, pos)}`).join(' · ');
+      const others = Object.keys(f.answers).filter((pos) => pos !== '1').sort().map((pos) => answerPart((f.scales || {})[pos], pos, followAnswer(f, pos))).join(' · ');
       const who = [f.agent ? nameOf('agent', f.agent) : '', f.queue ? nameOf('queue', f.queue) : ''].filter(Boolean).join(' · ');
       return el('tr', {},
         el('td', {}, el('div', { class: 'cf-nowrap', text: shortDateTime(f.ended_at) }), el('div', { class: 'cf-sub-line', text: `${f.survey_name} · ${t('cf_VersionShort', 'v')}${f.survey_version}` })),
@@ -1514,7 +1518,9 @@ function callBackSection(f) {
   if (f.callback === 'none') return el('p', { class: 'cf-muted', text: t('cf_CallBackNoNumberShort', 'No number to call back.') });
   const result = el('div');
   const extensions = extensionOptions();
-  const ext = select('cf-cb-ext', extensions, extensions.length ? extensions[0][0] : '');
+  // The agent who took the call rings first: they know the customer.
+  const first = extensions.some(([number]) => number === f.agent) ? f.agent : (extensions.length ? extensions[0][0] : '');
+  const ext = select('cf-cb-ext', extensions, first);
   const typed = f.callback === 'typed' ? el('input', { type: 'text', id: 'cf-cb-typed', maxlength: '40', autocomplete: 'off' }) : null;
   const go = () => {
     const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
@@ -1539,7 +1545,7 @@ function openFollowUp(f, page, focusCallBack) {
   state.followUp = { f, page };
   const fact = (term, value) => (value ? [el('dt', { text: term }), el('dd', { text: value })] : null);
   const answers = Object.keys(f.answers).sort().map((pos) => (pos === '1'
-    ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t('cf_Q', 'Q')}${pos}: ${followAnswer(f, pos)}`)).join(' · ');
+    ? `${metricName(f.scale)}: ${f.answers[pos]}` : answerPart((f.scales || {})[pos], pos, followAnswer(f, pos)))).join(' · ');
   const statusResult = el('div', { id: 'cf-modal-result' });
   $id('cf-modal-title').textContent = sub(t('cf_FollowUpTitle', 'Follow-Up: {caller}'), { caller: f.caller_num || t('cf_Withheld', 'Withheld') });
   fill($id('cf-modal-content'),

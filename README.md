@@ -6,58 +6,78 @@ A MikoPBX extension module that asks your callers how the call went. When the ag
 
 > **Status: in development, not released yet.** It works on MikoPBX 2026.6.34 and is tested with real calls, but it isn't ready for production use. Releases will be on the [Releases page](https://github.com/eneuen/ModuleCallFeedback/releases), and what changes in each version is in [CHANGELOG.md](CHANGELOG.md).
 
-![The Overview tab: the CSAT score, response and completion rates, open follow-ups, and the score over time](docs/screenshots/overview.png)
+![The Overview tab: the CSAT score and its change from the previous period, the response rate, the share of issues resolved, open follow-ups, and the score by week](docs/screenshots/overview.png)
 
 ## Features
 
-- **Surveys** on chosen incoming and outgoing routes: up to three questions on fixed scales (CSAT, NPS, CES, yes/no), built-in English and Russian prompts or your own recordings, and rules for minimum talk time, days and hours, the share of calls to survey and how often the same number is asked. A test call plays the survey to an extension before it goes live.
+- **Surveys** on chosen incoming and outgoing routes: up to three questions on fixed scales (CSAT, NPS, CES, yes/no), and rules for minimum talk time, days and hours, the share of calls to survey and how often the same number is asked. A test call plays the survey to an extension before it goes live.
+- **Prompts included:** recorded prompts in English and Russian for the intro, the CSAT, NPS and CES questions, "was your issue resolved?", an invalid key and a thank-you, so there is nothing to record to get started. Your own recordings from **Sound files** work too.
+- **Listen before you choose:** every prompt in the survey editor has a play button, in the menu and beside it, so you can hear a prompt in the browser before choosing it.
 - **Results:** the headline score with its change from the previous period, response and resolution rates, the score over time, and the score by agent, queue, line, direction, hour, weekday, time to answer or talk time. Scores stay hidden until a group has enough responses.
 - **Survey health:** how many eligible calls were surveyed, how many callers reached the end, the question where most of them leave, and how many calls each rule left out.
-- **Follow-ups:** a low score opens a case with an email alert. Cases have a status and a note, and a call-back rings an agent's extension and then the customer, with safeguards against calling expensive numbers.
+- **Follow-ups:** a low score opens a case with an email alert. Cases have a status and a note, and a call-back rings the agent who took the call (or another extension) and then the customer, with safeguards against calling expensive numbers.
 - **Versions:** once a survey is live its wording is fixed, so results stay comparable. Changing it means a new version, and versions are never averaged together.
 - **Exports:** CSV of any results table, PNG of any chart, and an optional daily or weekly summary email.
-- **Ready to try:** a new install starts with an example survey that uses the built-in prompts, so you can hear a survey on your own phone a minute after installing. New surveys can start from the same kind of template: CSAT, NPS or CES, each followed by "was your issue resolved?".
+- **Templates:** a new install starts with an example survey, so you can hear a survey on your own phone a minute after installing. New surveys can start from a template too: CSAT, NPS or CES, each followed by "was your issue resolved?", with the prompts already chosen.
 - **Languages:** English and Russian, following the admin cabinet's language. Each survey plays its prompts in English or Russian.
+
+## What the caller hears
+
+With the CSAT template and the built-in English prompts, once the agent hangs up:
+
+> Thank you for calling. Please stay on the line for a short survey about your call.
+>
+> How satisfied were you with this call? Press 1 for very dissatisfied, up to 5 for very satisfied.
+>
+> Was your issue resolved? Press 1 for yes, or 2 for no.
+>
+> Thank you for your feedback. Goodbye.
+
+A wrong key plays "Sorry, that key is not valid." and asks again. The caller can hang up at any point; the answers given so far are kept. The NPS template asks for 0 to 10 ("for 10, press 1 then 0"), and the CES template asks how easy it was to get what they needed.
 
 ## Screenshots
 
-The screenshots show a test PBX with simulated calls.
+The screenshots show a test PBX with six months of simulated calls; the names and numbers are made up.
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/survey-health.png"><img src="docs/screenshots/survey-health.png" alt="Survey Health: eligible calls, share surveyed, share reaching the end, and where callers leave the survey"></a>
-      <br><b>Survey Health.</b> How many eligible calls were surveyed, how far callers got, and the question most of them leave at.
-    </td>
-    <td width="50%" valign="top">
       <a href="docs/screenshots/breakdowns.png"><img src="docs/screenshots/breakdowns.png" alt="Breakdowns: the CSAT score, average and responses per agent"></a>
       <br><b>Breakdowns.</b> The score per agent, queue, line, direction, hour, weekday, time to answer or talk time.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/survey-health.png"><img src="docs/screenshots/survey-health.png" alt="Survey Health: eligible calls, share surveyed, share reaching the end, where callers leave, and calls not surveyed by rule"></a>
+      <br><b>Survey Health.</b> How many eligible calls were surveyed, how far callers got, the question most of them leave at, and how many calls each rule left out.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/follow-ups.png"><img src="docs/screenshots/follow-ups.png" alt="Follow-Ups: low-scoring calls with the score, caller, agent, queue and status"></a>
-      <br><b>Follow-Ups.</b> Every call with a low score, filtered by status, ready to call back or update.
+      <a href="docs/screenshots/follow-ups.png"><img src="docs/screenshots/follow-ups.png" alt="Follow-Ups: low-scoring calls with the score, caller, agent, queue, status and note"></a>
+      <br><b>Follow-Ups.</b> Every call with a low score, with its status and note, filtered by status, ready to call back or update.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/follow-up-dialog.png"><img src="docs/screenshots/follow-up-dialog.png" alt="A follow-up: the call's details, the call-back controls, and the status and note"></a>
-      <br><b>A follow-up.</b> The call's answers, agent and queue; a call-back through your outgoing routes; and the case's status and note.
+      <a href="docs/screenshots/follow-up-dialog.png"><img src="docs/screenshots/follow-up-dialog.png" alt="A follow-up: the call's answers and agent, earlier call-backs, the call-back controls, and the status and note"></a>
+      <br><b>A follow-up.</b> The call's answers and agent, earlier call-backs, a call-back that rings the agent first, and the case's status and note.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <a href="docs/screenshots/surveys.png"><img src="docs/screenshots/surveys.png" alt="Surveys: each survey with its status, routes and responses in the last 7 days"></a>
-      <br><b>Surveys.</b> Each survey with its status, the routes it runs on, and how many callers answered in the last 7 days.
+      <br><b>Surveys.</b> Each survey with its status, what it still needs before it can go live, the routes it runs on, and how many callers answered in the last 7 days.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings: follow-up thresholds, alert and summary emails, call-back prefixes and limits"></a>
-      <br><b>Settings.</b> The scores that open a follow-up, alert and summary emails, one-click call-back prefixes, and limits.
+      <a href="docs/screenshots/new-survey.png"><img src="docs/screenshots/new-survey.png" alt="New Survey: start from a CSAT, NPS or CES template or a blank survey, then a name and language"></a>
+      <br><b>New Survey.</b> Start from a template with the built-in prompts already chosen, or from a blank survey.
     </td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">
-      <a href="docs/screenshots/survey-editor.png"><img src="docs/screenshots/survey-editor.png" alt="The survey editor: name, language, prompts and questions of a live survey version"></a>
-      <br><b>The survey editor.</b> Prompts and questions, then the rules, routes and a test call. A live version's wording is fixed; New Version starts a draft to change it.
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/survey-editor.png"><img src="docs/screenshots/survey-editor.png" alt="The survey editor: a draft from the NPS template, with the prompt menu open and a play button on every prompt"></a>
+      <br><b>The survey editor.</b> A draft from the NPS template. Every prompt has a play button, in the menu and beside it; the box at the top lists what's left before it can go live.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings: follow-up thresholds, alert and summary emails, call-back prefixes, limits, excluded numbers and deleting a number's data"></a>
+      <br><b>Settings.</b> The scores that open a follow-up, alert and summary emails, one-click call-back prefixes, limits, numbers never to survey, and deleting all data for a number.
     </td>
   </tr>
 </table>
@@ -66,8 +86,8 @@ The screenshots show a test PBX with simulated calls.
 
 - MikoPBX 2026.6.34 or later.
 - An admin account on the PBX: the module's pages are shown to admins only.
-- Nothing to record to get started: the module ships prompts in English and Russian for the intro, CSAT, NPS, CES and "was your issue resolved?" questions, an invalid key and a thank-you. To use your own wording, upload recordings under **Sound files** (MIKO's Phrase Studio module can generate them) and choose them in the survey.
 - For alert and summary emails: the PBX's mail settings, with email notifications switched on.
+- Optional, for your own wording: recordings uploaded under **Sound files**. MIKO's Phrase Studio module can generate them.
 
 A survey can't be activated while:
 

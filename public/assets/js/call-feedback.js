@@ -117,7 +117,7 @@
   var languageLabel = (l) => LANGUAGES[l] ? label(LANGUAGES[l]) : l;
   var problemLabel = (key) => t(key, PROBLEMS[key] || key);
   var LOCALE = document.documentElement.lang || void 0;
-  var dateTime = (epoch) => epoch ? new Date(epoch * 1e3).toLocaleString(LOCALE) : "\u2014";
+  var dateTime = (epoch) => epoch ? new Date(epoch * 1e3).toLocaleString(LOCALE, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "\u2014";
   var shortDateTime = (epoch) => epoch ? new Date(epoch * 1e3).toLocaleString(LOCALE, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "\u2014";
   var shortDate = (iso) => (/* @__PURE__ */ new Date(`${iso}T00:00:00`)).toLocaleDateString(LOCALE, { day: "numeric", month: "short" });
   var count = (n) => Number(n).toLocaleString(LOCALE);
@@ -851,11 +851,12 @@
         {},
         el("td", { text: shortDateTime(c.ended_at) }),
         el("td", { text: c.caller_num || "" }),
-        el("td", { text: Object.keys(c.answers).length === 0 ? t("cf_NoKeys", "No keys pressed") : Object.keys(c.answers).sort().map((pos) => `${t("cf_Q", "Q")}${pos}: ${answerText(questions[pos], c.answers[pos])}`).join(" \xB7 ") })
+        el("td", { text: Object.keys(c.answers).length === 0 ? t("cf_NoKeys", "No keys pressed") : Object.keys(c.answers).sort().map((pos) => answerPart((questions[pos] || {}).scale, pos, answerText(questions[pos], c.answers[pos]))).join(" \xB7 ") })
       ))
     ));
   }
   var followAnswer = (f, pos) => answerText({ scale: (f.scales || {})[pos] }, f.answers[pos]);
+  var answerPart = (scale, pos, text) => `${METRICS[scale] ? metricName(scale) : `${t("cf_Q", "Q")}${pos}`}: ${text}`;
   function answerText(question, value) {
     if (question && question.scale === "yesno") return value === 1 ? t("cf_Yes", "yes") : t("cf_No", "no");
     return String(value);
@@ -1146,7 +1147,7 @@
             {},
             el("td", { text: x.number }),
             el("td", { class: "cf-muted", text: x.note || "" }),
-            el("td", { class: "cf-muted cf-nowrap", text: x.created_at ? new Date(x.created_at * 1e3).toLocaleDateString(LOCALE) : "" }),
+            el("td", { class: "cf-muted cf-nowrap", text: x.created_at ? new Date(x.created_at * 1e3).toLocaleDateString(LOCALE, { day: "numeric", month: "short", year: "numeric" }) : "" }),
             el("td", { class: "cf-num" }, el("button", {
               class: "ui basic mini button",
               type: "button",
@@ -1672,7 +1673,7 @@
       }
       const rows = data.rows.map((f) => {
         var _a;
-        const others = Object.keys(f.answers).filter((pos) => pos !== "1").sort().map((pos) => `${t("cf_Q", "Q")}${pos}: ${followAnswer(f, pos)}`).join(" \xB7 ");
+        const others = Object.keys(f.answers).filter((pos) => pos !== "1").sort().map((pos) => answerPart((f.scales || {})[pos], pos, followAnswer(f, pos))).join(" \xB7 ");
         const who = [f.agent ? nameOf("agent", f.agent) : "", f.queue ? nameOf("queue", f.queue) : ""].filter(Boolean).join(" \xB7 ");
         return el(
           "tr",
@@ -1731,7 +1732,8 @@
     if (f.callback === "none") return el("p", { class: "cf-muted", text: t("cf_CallBackNoNumberShort", "No number to call back.") });
     const result = el("div");
     const extensions = extensionOptions();
-    const ext = select("cf-cb-ext", extensions, extensions.length ? extensions[0][0] : "");
+    const first = extensions.some(([number]) => number === f.agent) ? f.agent : extensions.length ? extensions[0][0] : "";
+    const ext = select("cf-cb-ext", extensions, first);
     const typed = f.callback === "typed" ? el("input", { type: "text", id: "cf-cb-typed", maxlength: "40", autocomplete: "off" }) : null;
     const go = () => {
       const extLabel = ext.selectedOptions[0] ? ext.selectedOptions[0].textContent : ext.value;
@@ -1766,7 +1768,7 @@
   function openFollowUp(f, page, focusCallBack) {
     state.followUp = { f, page };
     const fact = (term, value) => value ? [el("dt", { text: term }), el("dd", { text: value })] : null;
-    const answers = Object.keys(f.answers).sort().map((pos) => pos === "1" ? `${metricName(f.scale)}: ${f.answers[pos]}` : `${t("cf_Q", "Q")}${pos}: ${followAnswer(f, pos)}`).join(" \xB7 ");
+    const answers = Object.keys(f.answers).sort().map((pos) => pos === "1" ? `${metricName(f.scale)}: ${f.answers[pos]}` : answerPart((f.scales || {})[pos], pos, followAnswer(f, pos))).join(" \xB7 ");
     const statusResult = el("div", { id: "cf-modal-result" });
     $id("cf-modal-title").textContent = sub(t("cf_FollowUpTitle", "Follow-Up: {caller}"), { caller: f.caller_num || t("cf_Withheld", "Withheld") });
     fill(
